@@ -16,6 +16,7 @@ log = logging.getLogger(__name__)
 
 MAX_WORKERS = 8
 GOOGLE_FALLBACK_HOURS = 30 * 24  # Google News search window when the fallback is enabled
+MARKET_TRIAGE_POOL = 20  # market candidates kept for the LLM relevance triage
 
 _TRACKING_PREFIXES = ("utm_", "guce", "fbclid", "gclid", "ncid", "cmpid", "soc_src", "soc_trk")
 
@@ -132,7 +133,11 @@ def collect_all(cfg: AppConfig) -> list[TopicResult]:
         # can never shadow a fresh in-window copy of the same headline.
         merged = dedupe(filter_recent(topic_items, cfg.news.lookback_hours, now))
         merged.sort(key=_recency_key)
-        capped = merged[: cfg.news.max_articles_per_topic]
+        cap = cfg.news.max_articles_per_topic
+        if topic == MARKET_TOPIC and cfg.news.market_relevance_filter:
+            # keep a larger pool; the LLM triage in cli.py narrows it down
+            cap = max(cap, MARKET_TRIAGE_POOL)
+        capped = merged[:cap]
         is_fallback = False
         if not capped and topic != MARKET_TOPIC and fallback_enabled:
             # no fixed window: just the most recent items known for this ticker
