@@ -1,0 +1,45 @@
+# Tickers to include in the daily report (Yahoo Finance symbol format, e.g. BRK-B).
+tickers:
+  - META
+  - MSFT
+  - AMZN
+  - SIVE.ST # Sivers Semiconductors, Nasdaq Stockholm
+  - UBER
+  - AMSC
+  - NBIS
+  - GOOGL
+  - NOW
+  - RDDT
+  - ASML
+  - D05.SI # DBS Group, SGX
+  - U96.SI # Sembcorp Industries, SGX
+
+ollama:
+  host: "http://localhost:11434"
+  model: "gemma3:12b"
+  timeout_seconds: 300 # generous: the first call also loads the model into VRAM
+  keep_alive: "10m" # keep the model loaded between per-topic calls
+  options:
+    temperature: 0.3
+    num_ctx: 8192 # context window; the news prompt is budgeted to fit this
+
+news:
+  lookback_hours: 24 # only include news newer than this
+  max_articles_per_topic: 5 # top N most recent items per section
+  max_chars_per_article: 1500
+  request_timeout_seconds: 15
+  # Drop items from a ticker's section when neither the title nor the snippet
+  # mentions the ticker symbol or company name (Yahoo's "related news" is broad).
+  require_ticker_mention: true
+  # When a ticker has no news inside lookback_hours, show its N most recent
+  # items instead, however old (0 disables this fallback).
+  fallback_max_articles: 2
+  # Feeds used for the market-wide "Market Overview" section.
+  market_feeds:
+    - "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en"
+    - "https://finance.yahoo.com/news/rssindex"
+    - "https://www.cnbc.com/id/100003114/device/rss/rss.html"
+    - "https://feeds.content.dowjones.io/public/rss/mw_topstories"
+
+report:
+  output_dir: "reports"
