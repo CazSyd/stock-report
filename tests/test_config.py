@@ -18,6 +18,7 @@ def test_minimal_config_gets_defaults(tmp_path):
     assert cfg.news.max_articles_per_topic == 5
     assert cfg.news.require_ticker_mention is True
     assert cfg.news.fallback_max_articles == 2
+    assert cfg.news.market_relevance_filter is True
     assert cfg.output_dir == "reports"
     assert cfg.base_dir == tmp_path.resolve()
 
@@ -105,6 +106,11 @@ def test_fallback_max_articles_zero_disables(tmp_path):
 def test_require_ticker_mention_must_be_bool(tmp_path):
     with pytest.raises(ConfigError, match="require_ticker_mention"):
         load_config(write(tmp_path, "tickers: [A]\nnews:\n  require_ticker_mention: maybe\n"))
+
+
+def test_market_relevance_filter_must_be_bool(tmp_path):
+    with pytest.raises(ConfigError, match="market_relevance_filter"):
+        load_config(write(tmp_path, "tickers: [A]\nnews:\n  market_relevance_filter: 5\n"))
 
 
 def test_market_feeds_must_be_list(tmp_path):
