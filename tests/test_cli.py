@@ -105,6 +105,54 @@ def test_successful_run_exits_0(config_file, tmp_path, monkeypatch):
     assert "- Bullet summary" in out.read_text(encoding="utf-8")
 
 
+def _market_results(n=8):
+    items = [make_item(title=f"M{i}", url=f"https://m.com/{i}", hours_ago=1) for i in range(n)]
+    return [TopicResult(MARKET_TOPIC, MARKET_LABEL, items=items)]
+
+
+def _patch_llm(monkeypatch):
+    monkeypatch.setattr(cli.summarizer, "preflight", lambda cfg: None)
+    monkeypatch.setattr(cli.summarizer, "make_client", lambda cfg: object())
+    monkeypatch.setattr(cli.summarizer, "summarize_topic", lambda c, cfg, m: "- summary")
+
+
+def test_market_triage_filters_and_caps(config_file, tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "collect_all", lambda cfg: _market_results())
+    _patch_llm(monkeypatch)
+    monkeypatch.setattr(cli.summarizer, "triage_market_items", lambda c, cfg, items: items[2:5])
+    out = tmp_path / "r.md"
+    assert cli.main(["--config", str(config_file), "--output", str(out)]) == cli.EXIT_OK
+    content = out.read_text(encoding="utf-8")
+    assert "M2" in content and "M4" in content
+    assert "M0" not in content and "M7" not in content  # triaged away
+
+
+def test_market_triage_failure_falls_back_to_newest(config_file, tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "collect_all", lambda cfg: _market_results())
+    _patch_llm(monkeypatch)
+
+    def boom(c, cfg, items):
+        raise RuntimeError("json mode unsupported")
+
+    monkeypatch.setattr(cli.summarizer, "triage_market_items", boom)
+    out = tmp_path / "r.md"
+    assert cli.main(["--config", str(config_file), "--output", str(out)]) == cli.EXIT_OK
+    content = out.read_text(encoding="utf-8")
+    assert "M0" in content and "M4" in content  # newest 5 kept
+    assert "M5" not in content
+
+
+def test_dry_run_never_calls_triage(config_file, tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "collect_all", lambda cfg: _market_results())
+
+    def must_not_run(c, cfg, items):
+        raise AssertionError("triage must not run in dry-run mode")
+
+    monkeypatch.setattr(cli.summarizer, "triage_market_items", must_not_run)
+    out = tmp_path / "r.md"
+    assert cli.main(["--config", str(config_file), "--dry-run", "--output", str(out)]) == cli.EXIT_OK
+
+
 def test_fetch_failure_topic_skips_llm_and_exits_3(config_file, tmp_path, monkeypatch):
     failed = TopicResult("AAPL", "AAPL", error="News fetch failed: all 3 sources errored")
     monkeypatch.setattr(cli, "collect_all", lambda cfg: [failed])
