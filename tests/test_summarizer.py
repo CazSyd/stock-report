@@ -13,6 +13,7 @@ from stockreport.summarizer import (
     build_user_message,
     preflight,
     summarize_topic,
+    triage_market_items,
 )
 
 
@@ -127,6 +128,39 @@ def test_summarize_topic_object_response():
             return SimpleNamespace(message=SimpleNamespace(content="  text  "))
 
     assert summarize_topic(Chat(), OllamaConfig(), "msg") == "text"
+
+
+class _TriageClient:
+    def __init__(self, content):
+        self.content = content
+        self.kwargs = None
+
+    def chat(self, **kwargs):
+        self.kwargs = kwargs
+        return {"message": {"content": self.content}}
+
+
+def test_triage_market_items_parses_json():
+    client = _TriageClient('{"relevant": [3, 1, "2", 99, 1]}')
+    items = [make_item(title=f"T{i}", url=f"https://e.com/{i}") for i in range(4)]
+    kept = triage_market_items(client, OllamaConfig(), items)
+    # coerced, deduped, out-of-range dropped, recency (index) order restored
+    assert [i.title for i in kept] == ["T0", "T1", "T2"]
+    assert client.kwargs["format"] == "json"
+    assert client.kwargs["options"]["temperature"] == 0.0
+
+
+def test_triage_market_items_regex_fallback_on_bad_json():
+    client = _TriageClient("Relevant items are 2 and 4.")
+    items = [make_item(title=f"T{i}", url=f"https://e.com/{i}") for i in range(4)]
+    kept = triage_market_items(client, OllamaConfig(), items)
+    assert [i.title for i in kept] == ["T1", "T3"]
+
+
+def test_triage_market_items_empty_response():
+    client = _TriageClient('{"relevant": []}')
+    items = [make_item(title="T0", url="https://e.com/0")]
+    assert triage_market_items(client, OllamaConfig(), items) == []
 
 
 def test_summarize_topic_passes_fresh_context_per_call():
