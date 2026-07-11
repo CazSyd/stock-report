@@ -6,6 +6,7 @@ an independent context.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import timezone
@@ -13,7 +14,7 @@ from datetime import timezone
 import ollama
 
 from .config import NewsConfig, OllamaConfig
-from .models import MARKET_TOPIC, TopicResult
+from .models import MARKET_TOPIC, NewsItem, TopicResult
 
 log = logging.getLogger(__name__)
 
@@ -132,11 +133,63 @@ def summarize_topic(client: ollama.Client, cfg: OllamaConfig, user_message: str)
         options=cfg.options,
         keep_alive=cfg.keep_alive,
     )
+    text = _response_content(response)
+    # Thinking models (e.g. qwen3) may prepend a reasoning block
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    return text
+
+
+TRIAGE_SYSTEM_PROMPT = """You screen headlines for the market-overview section of a daily stock report.
+You will be given a numbered list of news items. An item is RELEVANT if it can
+affect financial markets or matters to investors: macroeconomics, central banks,
+interest rates, market indices, notable company or sector news, commodities,
+or geopolitics with market impact.
+An item is NOT relevant if it is a lifestyle or social-media trend, a
+personal-finance advice or individual money story, a product review, a
+human-interest piece, or daily service journalism such as "best CD rates today"
+or "mortgage rates today".
+Respond with JSON only, in the form {"relevant": [1, 4, 7]} listing the numbers
+of the relevant items."""
+
+
+def triage_market_items(client: ollama.Client, cfg: OllamaConfig, items: list[NewsItem]) -> list[NewsItem]:
+    """One cheap JSON-mode call that returns the market-relevant subset of items."""
+    lines = []
+    for index, item in enumerate(items, start=1):
+        line = f"[{index}] {item.title}"
+        if item.summary:
+            line += f" - {item.summary[:200]}"
+        lines.append(line)
+    response = client.chat(
+        model=cfg.model,
+        messages=[
+            {"role": "system", "content": TRIAGE_SYSTEM_PROMPT},
+            {"role": "user", "content": "\n".join(lines)},
+        ],
+        options={**cfg.options, "temperature": 0.0},
+        keep_alive=cfg.keep_alive,
+        format="json",
+    )
+    content = re.sub(r"<think>.*?</think>", "", _response_content(response), flags=re.DOTALL)
+    try:
+        numbers = json.loads(content).get("relevant", [])
+    except (json.JSONDecodeError, AttributeError):
+        numbers = re.findall(r"\d+", content)
+    kept_indices: list[int] = []
+    for number in numbers if isinstance(numbers, list) else []:
+        try:
+            index = int(number)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= index <= len(items) and index not in kept_indices:
+            kept_indices.append(index)
+    kept_indices.sort()  # preserve recency order regardless of how the model listed them
+    return [items[index - 1] for index in kept_indices]
+
+
+def _response_content(response) -> str:
     message = getattr(response, "message", None)
     content = getattr(message, "content", None)
     if content is None and isinstance(response, dict):
         content = (response.get("message") or {}).get("content")
-    text = (content or "").strip()
-    # Thinking models (e.g. qwen3) may prepend a reasoning block
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-    return text
+    return (content or "").strip()
