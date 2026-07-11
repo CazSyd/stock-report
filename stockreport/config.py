@@ -43,6 +43,7 @@ class NewsConfig:
     request_timeout_seconds: int = 15
     require_ticker_mention: bool = True  # drop ticker-section items that never mention the ticker/company
     fallback_max_articles: int = 2  # quiet tickers: show this many most-recent items instead (0 disables)
+    market_relevance_filter: bool = True  # LLM-screen market headlines for actual market relevance
     market_feeds: list[str] = field(default_factory=lambda: list(DEFAULT_MARKET_FEEDS))
 
 
@@ -165,8 +166,12 @@ def _load_news(section: dict) -> NewsConfig:
     require_mention = section.get("require_ticker_mention", cfg.require_ticker_mention)
     if not isinstance(require_mention, bool):
         raise ConfigError("'news.require_ticker_mention' must be true or false")
+    market_filter = section.get("market_relevance_filter", cfg.market_relevance_filter)
+    if not isinstance(market_filter, bool):
+        raise ConfigError("'news.market_relevance_filter' must be true or false")
     return NewsConfig(
         require_ticker_mention=require_mention,
+        market_relevance_filter=market_filter,
         lookback_hours=_positive(section.get("lookback_hours", cfg.lookback_hours), "news.lookback_hours"),
         max_articles_per_topic=_positive(
             section.get("max_articles_per_topic", cfg.max_articles_per_topic), "news.max_articles_per_topic"
