@@ -60,6 +60,11 @@ Edit `config.yaml`:
   keeps items whose title or snippet mentions the ticker symbol or company name;
   Yahoo's "related news" otherwise drags in adjacent stories. Set `false` for
   broader coverage.
+- `news.market_relevance_filter` — when `true` (default), an extra quick model
+  call screens the Market Overview candidates and drops items that don't affect
+  markets (lifestyle trends, personal-finance advice columns, "best CD rates
+  today" service posts). Runs only in real runs; `--dry-run` shows the newest
+  items unscreened.
 - `news.fallback_max_articles` — when a ticker has no news inside the lookback
   window, its section shows this many most-recent items instead (however old),
   clearly labeled. `0` disables the fallback. Useful for quiet or non-US
