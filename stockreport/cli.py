@@ -10,7 +10,8 @@ from pathlib import Path
 
 from . import __version__, summarizer
 from .aggregator import collect_all
-from .config import ConfigError, load_config, normalize_tickers
+from .config import AppConfig, ConfigError, load_config, normalize_tickers
+from .models import MARKET_TOPIC, TopicResult
 from .report import default_output_path, render_report, write_report
 from .summarizer import PreflightError
 
@@ -100,6 +101,8 @@ def main(argv: list[str] | None = None) -> int:
         if not result.items:
             log.warning("%s: no news found, skipping summarization", result.label)
             continue
+        if result.topic == MARKET_TOPIC and cfg.news.market_relevance_filter:
+            result.items = _apply_market_triage(result, cfg, client, args.dry_run)
         result.prompt, result.dropped = summarizer.build_user_message(
             result, cfg.news, cfg.ollama, report_date
         )
@@ -145,3 +148,30 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_CONFIG
     log.info("Report written to %s", output_path.resolve())
     return EXIT_PARTIAL if any_error else EXIT_OK
+
+
+def _apply_market_triage(result: TopicResult, cfg: AppConfig, client, dry_run: bool):
+    """Ask the model which market candidates are actually market-relevant,
+    then keep the newest max_articles_per_topic of them. Any failure falls
+    back to the newest items so the section is never lost."""
+    cap = cfg.news.max_articles_per_topic
+    if dry_run:
+        log.info("%s: relevance triage skipped in dry run", result.label)
+        return result.items[:cap]
+    try:
+        kept = summarizer.triage_market_items(client, cfg.ollama, result.items)
+    except Exception as exc:
+        log.warning("%s: relevance triage failed (%s); keeping the newest items", result.label, exc)
+        return result.items[:cap]
+    if not kept:
+        log.warning("%s: relevance triage kept nothing; keeping the newest items", result.label)
+        return result.items[:cap]
+    dropped = len(result.items) - len(kept)
+    if dropped:
+        log.info(
+            "%s: triage dropped %d of %d items as not market-relevant",
+            result.label,
+            dropped,
+            len(result.items),
+        )
+    return kept[:cap]
