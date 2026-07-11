@@ -54,6 +54,7 @@ def test_norm_url():
 
 def _cfg(tickers=("NVDA",), feeds=("https://feeds.example.com/m",), **news_kwargs):
     news_kwargs.setdefault("require_ticker_mention", False)  # legacy tests use generic titles
+    news_kwargs.setdefault("market_relevance_filter", False)  # pool sizing tested explicitly
     return AppConfig(
         tickers=list(tickers),
         news=NewsConfig(market_feeds=list(feeds), **news_kwargs),
@@ -232,6 +233,15 @@ def test_collect_all_market_never_falls_back(monkeypatch):
     market = collect_all(_cfg(tickers=()))[0]
     assert market.is_fallback is False
     assert market.items == []
+
+
+def test_collect_all_market_keeps_triage_pool(monkeypatch):
+    items = [make_item(title=f"T{i}", url=f"https://m.com/{i}", hours_ago=1) for i in range(30)]
+    monkeypatch.setattr(aggregator.sources, "fetch_market_feed", lambda u, t: list(items))
+    with_triage = collect_all(_cfg(tickers=(), market_relevance_filter=True))[0]
+    assert len(with_triage.items) == aggregator.MARKET_TRIAGE_POOL  # pool for the LLM to screen
+    without_triage = collect_all(_cfg(tickers=(), market_relevance_filter=False))[0]
+    assert len(without_triage.items) == 5  # straight to the section cap
 
 
 def test_collect_all_malformed_feed_url_does_not_crash(monkeypatch):
