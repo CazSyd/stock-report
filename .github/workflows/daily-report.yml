@@ -10,6 +10,8 @@ jobs:
   report:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write # maintain the rolling "latest" release
     steps:
       - uses: actions/checkout@v4
 
@@ -36,3 +38,22 @@ jobs:
           path: reports/*.md
           if-no-files-found: ignore
           retention-days: 30
+
+      - name: Publish to the rolling "latest" release
+        if: always() # a partial report is still worth publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FILE=$(ls -t reports/*.md 2>/dev/null | head -n 1)
+          if [ -z "$FILE" ]; then
+            echo "No report was produced; keeping the previous release."
+            exit 0
+          fi
+          cp "$FILE" report.md
+          # create the release once; afterwards only update it
+          gh release view latest >/dev/null 2>&1 || \
+            gh release create latest --title "Latest daily report" --notes "(placeholder)"
+          # the release page renders the report as a web page...
+          gh release edit latest --title "Daily report $(date -u +%F)" --notes-file report.md
+          # ...and the asset is the stable downloadable file
+          gh release upload latest report.md --clobber
