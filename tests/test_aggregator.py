@@ -235,8 +235,36 @@ def test_collect_all_market_never_falls_back(monkeypatch):
     assert market.items == []
 
 
+def test_diversify_by_source_caps_publisher_bursts():
+    burst = [make_item(title=f"Listicle {i}", url=f"https://e.com/{i}", source="Insider Monkey") for i in range(10)]
+    other = [make_item(title="Fed news", url="https://e.com/fed", source="Reuters")]
+    kept = aggregator.diversify_by_source(burst + other, per_source_cap=3)
+    assert len([i for i in kept if i.source == "Insider Monkey"]) == 3
+    assert [i.title for i in kept][:3] == ["Listicle 0", "Listicle 1", "Listicle 2"]  # order preserved
+    assert any(i.source == "Reuters" for i in kept)
+
+
+def test_collect_all_market_pool_is_source_diverse(monkeypatch):
+    # regression: a syndication burst from one publisher filled the whole pool
+    burst = [
+        make_item(title=f"Burst {i}", url=f"https://m.com/b{i}", hours_ago=1, source="Insider Monkey")
+        for i in range(25)
+    ]
+    others = [
+        make_item(title=f"Real {i}", url=f"https://m.com/r{i}", hours_ago=2 + i, source=f"Outlet {i}")
+        for i in range(5)
+    ]
+    monkeypatch.setattr(aggregator.sources, "fetch_market_feed", lambda u, t: burst + others)
+    market = collect_all(_cfg(tickers=(), market_relevance_filter=True))[0]
+    assert len([i for i in market.items if i.source == "Insider Monkey"]) == 3
+    assert all(f"Real {i}" in [x.title for x in market.items] for i in range(5))
+
+
 def test_collect_all_market_keeps_triage_pool(monkeypatch):
-    items = [make_item(title=f"T{i}", url=f"https://m.com/{i}", hours_ago=1) for i in range(30)]
+    items = [
+        make_item(title=f"T{i}", url=f"https://m.com/{i}", hours_ago=1, source=f"Outlet {i % 10}")
+        for i in range(30)
+    ]
     monkeypatch.setattr(aggregator.sources, "fetch_market_feed", lambda u, t: list(items))
     with_triage = collect_all(_cfg(tickers=(), market_relevance_filter=True))[0]
     assert len(with_triage.items) == aggregator.MARKET_TRIAGE_POOL  # pool for the LLM to screen
