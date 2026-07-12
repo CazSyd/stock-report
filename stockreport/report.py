@@ -25,7 +25,7 @@ def render_report(
     lines: list[str] = [f"# Daily Stock Report - {generated_at:%Y-%m-%d}", ""]
     mode = " | DRY RUN (no model was called)" if dry_run else ""
     lines.append(
-        f"_Generated {generated_at:%Y-%m-%d %H:%M} local time | Model: {model} | "
+        f"_Generated {generated_at:%Y-%m-%d %H:%M} local time | Default model: {model} | "
         f"Lookback: {lookback_hours}h{mode}_"
     )
     lines.append("")
@@ -58,6 +58,9 @@ def render_report(
             lines.append(result.prompt.rstrip())
             lines.append(fence)
         else:
+            if result.model:
+                lines.append(f"_Summarized by {result.model}_")
+                lines.append("")
             lines.append(result.summary_md or "_The model returned an empty summary._")
         if result.items:
             lines.append("")
