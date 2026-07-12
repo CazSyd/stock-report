@@ -2,7 +2,9 @@ from datetime import datetime, timedelta, timezone
 
 from stockreport.models import NewsItem
 
-FIXED_NOW = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def make_item(
@@ -14,8 +16,10 @@ def make_item(
     summary="",
     origin="test",
 ) -> NewsItem:
+    # ages are relative to the real clock: collect_all filters against
+    # datetime.now(), so a frozen reference would rot as days pass
     if hours_ago is not None:
-        published = FIXED_NOW - timedelta(hours=hours_ago)
+        published = now_utc() - timedelta(hours=hours_ago)
     return NewsItem(
         title=title, url=url, source=source, published=published, summary=summary, origin=origin
     )
