@@ -8,6 +8,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from . import __version__, summarizer
 from .aggregator import collect_all
 from .config import AppConfig, ConfigError, load_config, normalize_tickers
@@ -26,7 +28,7 @@ EXIT_PARTIAL = 3
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="stockreport",
-        description="Daily market + ticker news report summarized by a local Ollama model.",
+        description="Daily market + ticker news report summarized by a free OpenRouter model.",
     )
     parser.add_argument(
         "--config",
@@ -35,12 +37,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to config.yaml (default: ./config.yaml, else the one next to this package)",
     )
     parser.add_argument("--tickers", help="Comma-separated ticker override, e.g. AAPL,MSFT")
-    parser.add_argument("--model", help="Override ollama.model from the config")
+    parser.add_argument("--model", help="Override openrouter.model from the config (must end in :free)")
     parser.add_argument("--output", type=Path, help="Explicit output file path for the report")
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Fetch news and build prompts but skip Ollama; writes a .dry-run.md report",
+        help="Fetch news and build prompts but skip the LLM; writes a .dry-run.md report",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser
@@ -67,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     args = _build_parser().parse_args(argv)
+    load_dotenv()  # .env in the working directory, if any
 
     try:
         cfg = load_config(_resolve_config_path(args.config))
@@ -77,15 +80,16 @@ def main(argv: list[str] | None = None) -> int:
         log.error("%s", exc)
         return EXIT_CONFIG
     if args.model:
-        cfg.ollama.model = args.model.strip()
+        cfg.openrouter.model = args.model.strip()
+    load_dotenv(cfg.base_dir / ".env")  # .env next to the config; real env vars win
 
     if not args.dry_run:
         try:
-            summarizer.preflight(cfg.ollama)
+            summarizer.preflight(cfg.openrouter)
         except PreflightError as exc:
             log.error("%s", exc)
             return EXIT_PREFLIGHT
-        log.info("Ollama preflight OK (host %s, model %s)", cfg.ollama.host, cfg.ollama.model)
+        log.info("OpenRouter preflight OK (model %s)", cfg.openrouter.model)
 
     log.info("Collecting news: market overview + %d tickers (%s)", len(cfg.tickers), ", ".join(cfg.tickers))
     results = collect_all(cfg)
@@ -93,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     generated_at = datetime.now().astimezone()
     report_date = f"{generated_at:%Y-%m-%d}"
 
-    client = None if args.dry_run else summarizer.make_client(cfg.ollama)
+    client = None if args.dry_run else summarizer.make_client(cfg.openrouter)
     for result in results:
         if result.error:
             log.warning("%s: %s", result.label, result.error)
@@ -104,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         if result.topic == MARKET_TOPIC and cfg.news.market_relevance_filter:
             result.items = _apply_market_triage(result, cfg, client, args.dry_run)
         result.prompt, result.dropped = summarizer.build_user_message(
-            result, cfg.news, cfg.ollama, report_date
+            result, cfg.news, cfg.openrouter, report_date
         )
         if result.dropped:
             log.info(
@@ -118,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         log.info("Summarizing %s (%d items)...", result.label, len(result.items) - result.dropped)
         started = time.monotonic()
         try:
-            result.summary_md = summarizer.summarize_topic(client, cfg.ollama, result.prompt)
+            result.summary_md, result.model = summarizer.summarize_topic(client, result.prompt)
         except Exception as exc:
             result.error = f"Summary failed: {exc.__class__.__name__}: {exc}"
             log.error("%s: %s", result.label, result.error)
@@ -126,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
             log.info("%s: summarized in %.0fs", result.label, time.monotonic() - started)
 
     if args.dry_run:
-        log.info("Dry run: skipped Ollama; the report contains the prompts that would be sent")
+        log.info("Dry run: skipped the LLM; the report contains the prompts that would be sent")
 
     any_error = any(r.error for r in results)
     output_dir = Path(cfg.output_dir)
@@ -139,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("Some topics failed; writing to %s to keep the existing report intact", output_path.name)
 
     markdown = render_report(
-        results, cfg.ollama.model, generated_at, cfg.news.lookback_hours, dry_run=args.dry_run
+        results, cfg.openrouter.model, generated_at, cfg.news.lookback_hours, dry_run=args.dry_run
     )
     try:
         write_report(markdown, output_path)
@@ -159,7 +163,7 @@ def _apply_market_triage(result: TopicResult, cfg: AppConfig, client, dry_run: b
         log.info("%s: relevance ranking skipped in dry run", result.label)
         return result.items[:cap]
     try:
-        ranked = summarizer.rank_market_items(client, cfg.ollama, result.items)
+        ranked = summarizer.rank_market_items(client, result.items)
     except Exception as exc:
         log.warning("%s: relevance ranking failed (%s); keeping the newest items", result.label, exc)
         return result.items[:cap]
