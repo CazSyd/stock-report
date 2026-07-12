@@ -151,27 +151,26 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _apply_market_triage(result: TopicResult, cfg: AppConfig, client, dry_run: bool):
-    """Ask the model which market candidates are actually market-relevant,
-    then keep the newest max_articles_per_topic of them. Any failure falls
+    """Ask the model to drop non-market candidates and rank the rest by
+    importance, then keep the top max_articles_per_topic. Any failure falls
     back to the newest items so the section is never lost."""
     cap = cfg.news.max_articles_per_topic
     if dry_run:
-        log.info("%s: relevance triage skipped in dry run", result.label)
+        log.info("%s: relevance ranking skipped in dry run", result.label)
         return result.items[:cap]
     try:
-        kept = summarizer.triage_market_items(client, cfg.ollama, result.items)
+        ranked = summarizer.rank_market_items(client, cfg.ollama, result.items)
     except Exception as exc:
-        log.warning("%s: relevance triage failed (%s); keeping the newest items", result.label, exc)
+        log.warning("%s: relevance ranking failed (%s); keeping the newest items", result.label, exc)
         return result.items[:cap]
-    if not kept:
-        log.warning("%s: relevance triage kept nothing; keeping the newest items", result.label)
+    if not ranked:
+        log.warning("%s: relevance ranking kept nothing; keeping the newest items", result.label)
         return result.items[:cap]
-    dropped = len(result.items) - len(kept)
-    if dropped:
-        log.info(
-            "%s: triage dropped %d of %d items as not market-relevant",
-            result.label,
-            dropped,
-            len(result.items),
-        )
-    return kept[:cap]
+    log.info(
+        "%s: model kept %d of %d candidates as market-relevant; showing the top %d by importance",
+        result.label,
+        len(ranked),
+        len(result.items),
+        min(cap, len(ranked)),
+    )
+    return ranked[:cap]
