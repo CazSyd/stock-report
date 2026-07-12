@@ -122,6 +122,16 @@ if Telegram ever rejects a message's formatting, it is resent as plain text so
 content is never lost. Each run also uploads the `.md` report as a workflow
 artifact (kept 30 days).
 
+### Latest report on demand
+
+Every run also updates a rolling GitHub release, so the newest report is always
+at the same two URLs (bookmark them, or pin one in your Telegram chat):
+
+- **Read in the browser** (GitHub renders the markdown):
+  `https://github.com/CazSyd/stock-report/releases/tag/latest`
+- **Raw file download**:
+  `https://github.com/CazSyd/stock-report/releases/download/latest/report.md`
+
 ## Notes
 
 - **Free-tier rate limits:** OpenRouter's free models are rate-limited (roughly 20
