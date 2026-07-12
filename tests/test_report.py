@@ -56,6 +56,15 @@ def test_render_fallback_note():
     assert "\ns\n" in md  # summary still rendered after the note
 
 
+def test_render_section_credits_answering_model():
+    result = TopicResult(
+        "AAPL", "AAPL", items=[make_item()], summary_md="s", model="nvidia/nemotron-3-super-120b-a12b:free"
+    )
+    md = _render([result])
+    assert "_Summarized by nvidia/nemotron-3-super-120b-a12b:free_" in md
+    assert md.index("Summarized by") < md.index("\ns\n")  # insert sits above the summary
+
+
 def test_render_dropped_note():
     result = TopicResult("AAPL", "AAPL", items=[make_item()], summary_md="s", dropped=2)
     md = _render([result])

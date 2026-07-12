@@ -12,8 +12,10 @@ def write(tmp_path, text):
 def test_minimal_config_gets_defaults(tmp_path):
     cfg = load_config(write(tmp_path, "tickers: [aapl, MSFT, aapl]\n"))
     assert cfg.tickers == ["AAPL", "MSFT"]  # uppercased and deduped
-    assert cfg.ollama.model == "gemma3:12b"
-    assert cfg.ollama.options["num_ctx"] == 8192
+    assert cfg.openrouter.model.endswith(":free")
+    assert cfg.openrouter.temperature == 0.3
+    assert cfg.openrouter.max_tokens == 1500
+    assert cfg.openrouter.context_tokens == 32768
     assert cfg.news.market_feeds == DEFAULT_MARKET_FEEDS
     assert cfg.news.max_articles_per_topic == 5
     assert cfg.news.require_ticker_mention is True
@@ -25,10 +27,10 @@ def test_minimal_config_gets_defaults(tmp_path):
     assert cfg.base_dir == tmp_path.resolve()
 
 
-def test_options_merge_keeps_unset_defaults(tmp_path):
-    cfg = load_config(write(tmp_path, "tickers: [A]\nollama:\n  options:\n    temperature: 0.7\n"))
-    assert cfg.ollama.options["temperature"] == 0.7
-    assert cfg.ollama.options["num_ctx"] == 8192
+def test_openrouter_partial_section_keeps_defaults(tmp_path):
+    cfg = load_config(write(tmp_path, "tickers: [A]\nopenrouter:\n  temperature: 0.7\n"))
+    assert cfg.openrouter.temperature == 0.7
+    assert cfg.openrouter.context_tokens == 32768
 
 
 def test_missing_file(tmp_path):
@@ -66,36 +68,49 @@ def test_fractional_number_rejected(tmp_path):
 
 def test_bool_rejected_as_number(tmp_path):
     with pytest.raises(ConfigError, match="timeout_seconds"):
-        load_config(write(tmp_path, "tickers: [A]\nollama:\n  timeout_seconds: true\n"))
+        load_config(write(tmp_path, "tickers: [A]\nopenrouter:\n  timeout_seconds: true\n"))
 
 
-def test_num_ctx_string_coerced(tmp_path):
-    # regression: quoted num_ctx used to reach the Ollama server as a string
-    cfg = load_config(write(tmp_path, 'tickers: [A]\nollama:\n  options:\n    num_ctx: "4096"\n'))
-    assert cfg.ollama.options["num_ctx"] == 4096
-    assert isinstance(cfg.ollama.options["num_ctx"], int)
+def test_paid_model_rejected(tmp_path):
+    # this project only uses free OpenRouter models
+    with pytest.raises(ConfigError, match="free"):
+        load_config(write(tmp_path, 'tickers: [A]\nopenrouter:\n  model: "openai/gpt-5.2"\n'))
 
 
-def test_num_ctx_null_rejected(tmp_path):
-    with pytest.raises(ConfigError, match="num_ctx"):
-        load_config(write(tmp_path, "tickers: [A]\nollama:\n  options:\n    num_ctx: null\n"))
+def test_free_model_accepted(tmp_path):
+    cfg = load_config(
+        write(tmp_path, 'tickers: [A]\nopenrouter:\n  model: "meta-llama/llama-3.3-70b-instruct:free"\n')
+    )
+    assert cfg.openrouter.model == "meta-llama/llama-3.3-70b-instruct:free"
 
 
-def test_numeric_keep_alive_preserved(tmp_path):
-    # regression: keep_alive: 600 used to be stringified into "600", which Ollama rejects
-    cfg = load_config(write(tmp_path, "tickers: [A]\nollama:\n  keep_alive: 600\n"))
-    assert cfg.ollama.keep_alive == 600
-    assert isinstance(cfg.ollama.keep_alive, int)
+def test_fallback_models_must_be_free(tmp_path):
+    with pytest.raises(ConfigError, match="free"):
+        load_config(
+            write(tmp_path, 'tickers: [A]\nopenrouter:\n  fallback_models: ["openai/gpt-5.2"]\n')
+        )
 
 
-def test_string_keep_alive_preserved(tmp_path):
-    cfg = load_config(write(tmp_path, 'tickers: [A]\nollama:\n  keep_alive: "5m"\n'))
-    assert cfg.ollama.keep_alive == "5m"
+def test_dynamic_fallback_default_and_validation(tmp_path):
+    cfg = load_config(write(tmp_path, "tickers: [A]\n"))
+    assert cfg.openrouter.dynamic_fallback is True
+    with pytest.raises(ConfigError, match="dynamic_fallback"):
+        load_config(write(tmp_path, "tickers: [A]\nopenrouter:\n  dynamic_fallback: sometimes\n"))
 
 
-def test_host_trailing_slash_stripped(tmp_path):
-    cfg = load_config(write(tmp_path, 'tickers: [A]\nollama:\n  host: "http://box:11434/"\n'))
-    assert cfg.ollama.host == "http://box:11434"
+def test_fallback_models_default_and_empty(tmp_path):
+    cfg = load_config(write(tmp_path, "tickers: [A]\n"))
+    assert cfg.openrouter.fallback_models  # non-empty default chain
+    assert all(m.endswith(":free") for m in cfg.openrouter.fallback_models)
+    cfg = load_config(write(tmp_path, "tickers: [A]\nopenrouter:\n  fallback_models: []\n"))
+    assert cfg.openrouter.fallback_models == []
+
+
+def test_temperature_validated(tmp_path):
+    with pytest.raises(ConfigError, match="temperature"):
+        load_config(write(tmp_path, "tickers: [A]\nopenrouter:\n  temperature: 3.5\n"))
+    with pytest.raises(ConfigError, match="temperature"):
+        load_config(write(tmp_path, 'tickers: [A]\nopenrouter:\n  temperature: "hot"\n'))
 
 
 def test_fallback_max_articles_zero_disables(tmp_path):

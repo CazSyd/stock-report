@@ -67,7 +67,7 @@ def test_summarize_failure_exits_3(config_file, monkeypatch):
     monkeypatch.setattr(cli.summarizer, "preflight", lambda cfg: None)
     monkeypatch.setattr(cli.summarizer, "make_client", lambda cfg: object())
 
-    def boom(client, cfg, msg):
+    def boom(client, msg):
         raise RuntimeError("model exploded")
 
     monkeypatch.setattr(cli.summarizer, "summarize_topic", boom)
@@ -80,7 +80,7 @@ def test_failed_run_does_not_clobber_existing_report(config_file, tmp_path, monk
     monkeypatch.setattr(cli.summarizer, "preflight", lambda cfg: None)
     monkeypatch.setattr(cli.summarizer, "make_client", lambda cfg: object())
     monkeypatch.setattr(
-        cli.summarizer, "summarize_topic", lambda c, cfg, m: (_ for _ in ()).throw(RuntimeError("x"))
+        cli.summarizer, "summarize_topic", lambda c, m: (_ for _ in ()).throw(RuntimeError("x"))
     )
     out_dir = tmp_path / "out"
     today = f"{datetime.now().astimezone():%Y-%m-%d}"
@@ -99,10 +99,14 @@ def test_successful_run_exits_0(config_file, tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "collect_all", lambda cfg: _canned_results())
     monkeypatch.setattr(cli.summarizer, "preflight", lambda cfg: None)
     monkeypatch.setattr(cli.summarizer, "make_client", lambda cfg: object())
-    monkeypatch.setattr(cli.summarizer, "summarize_topic", lambda c, cfg, m: "- Bullet summary")
+    monkeypatch.setattr(
+        cli.summarizer, "summarize_topic", lambda c, m: ("- Bullet summary", "backup/model:free")
+    )
     out = tmp_path / "full.md"
     assert cli.main(["--config", str(config_file), "--output", str(out)]) == cli.EXIT_OK
-    assert "- Bullet summary" in out.read_text(encoding="utf-8")
+    content = out.read_text(encoding="utf-8")
+    assert "- Bullet summary" in content
+    assert "_Summarized by backup/model:free_" in content  # sections credit the answering model
 
 
 def _market_results(n=8):
@@ -113,7 +117,7 @@ def _market_results(n=8):
 def _patch_llm(monkeypatch):
     monkeypatch.setattr(cli.summarizer, "preflight", lambda cfg: None)
     monkeypatch.setattr(cli.summarizer, "make_client", lambda cfg: object())
-    monkeypatch.setattr(cli.summarizer, "summarize_topic", lambda c, cfg, m: "- summary")
+    monkeypatch.setattr(cli.summarizer, "summarize_topic", lambda c, m: ("- summary", "fake/model:free"))
 
 
 def test_market_ranking_filters_and_caps(config_file, tmp_path, monkeypatch):
@@ -121,7 +125,7 @@ def test_market_ranking_filters_and_caps(config_file, tmp_path, monkeypatch):
     _patch_llm(monkeypatch)
     # model says: M6 most important, then M2, then M4
     monkeypatch.setattr(
-        cli.summarizer, "rank_market_items", lambda c, cfg, items: [items[6], items[2], items[4]]
+        cli.summarizer, "rank_market_items", lambda c, items: [items[6], items[2], items[4]]
     )
     out = tmp_path / "r.md"
     assert cli.main(["--config", str(config_file), "--output", str(out)]) == cli.EXIT_OK
@@ -134,8 +138,8 @@ def test_market_ranking_failure_falls_back_to_newest(config_file, tmp_path, monk
     monkeypatch.setattr(cli, "collect_all", lambda cfg: _market_results())
     _patch_llm(monkeypatch)
 
-    def boom(c, cfg, items):
-        raise RuntimeError("json mode unsupported")
+    def boom(c, items):
+        raise RuntimeError("model endpoint unavailable")
 
     monkeypatch.setattr(cli.summarizer, "rank_market_items", boom)
     out = tmp_path / "r.md"
@@ -148,7 +152,7 @@ def test_market_ranking_failure_falls_back_to_newest(config_file, tmp_path, monk
 def test_dry_run_never_calls_ranking(config_file, tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "collect_all", lambda cfg: _market_results())
 
-    def must_not_run(c, cfg, items):
+    def must_not_run(c, items):
         raise AssertionError("ranking must not run in dry-run mode")
 
     monkeypatch.setattr(cli.summarizer, "rank_market_items", must_not_run)
@@ -162,7 +166,7 @@ def test_fetch_failure_topic_skips_llm_and_exits_3(config_file, tmp_path, monkey
     monkeypatch.setattr(cli.summarizer, "preflight", lambda cfg: None)
     monkeypatch.setattr(cli.summarizer, "make_client", lambda cfg: object())
     called = []
-    monkeypatch.setattr(cli.summarizer, "summarize_topic", lambda c, cfg, m: called.append(1))
+    monkeypatch.setattr(cli.summarizer, "summarize_topic", lambda c, m: called.append(1))
     out = tmp_path / "r.md"
     assert cli.main(["--config", str(config_file), "--output", str(out)]) == cli.EXIT_PARTIAL
     assert not called  # no LLM call for a fetch-failed topic
