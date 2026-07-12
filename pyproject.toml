@@ -1,7 +1,7 @@
 [project]
 name = "stockreport"
 version = "1.0.0"
-description = "Daily market + ticker breaking-news report summarized by a local Ollama model"
+description = "Daily market + ticker breaking-news report summarized by a free OpenRouter model"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -9,7 +9,7 @@ dependencies = [
     "feedparser>=6.0.11",
     "requests>=2.32.0",
     "pyyaml>=6.0.2",
-    "ollama>=0.4.7",
+    "python-dotenv>=1.0.1",
 ]
 
 [project.scripts]
