@@ -160,6 +160,45 @@ def test_dry_run_never_calls_ranking(config_file, tmp_path, monkeypatch):
     assert cli.main(["--config", str(config_file), "--dry-run", "--output", str(out)]) == cli.EXIT_OK
 
 
+def test_telegram_env_missing_exits_2_before_fetching(config_file, monkeypatch):
+    monkeypatch.setattr(cli, "load_dotenv", lambda *a, **k: None)  # ignore the developer's real .env
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+
+    def must_not_fetch(cfg):
+        raise AssertionError("news must not be fetched when telegram env is missing")
+
+    monkeypatch.setattr(cli, "collect_all", must_not_fetch)
+    assert cli.main(["--config", str(config_file), "--dry-run", "--telegram"]) == cli.EXIT_PREFLIGHT
+
+
+def test_telegram_delivery_sends_report(config_file, tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+    monkeypatch.setattr(cli, "collect_all", lambda cfg: _canned_results())
+    sent = {}
+    monkeypatch.setattr(cli.telegram, "send_report", lambda md: sent.update(md=md) or 2)
+    out = tmp_path / "r.md"
+    code = cli.main(["--config", str(config_file), "--dry-run", "--telegram", "--output", str(out)])
+    assert code == cli.EXIT_OK
+    assert "## Market Overview" in sent["md"]  # delivered content is the rendered report
+
+
+def test_telegram_failure_exits_4(config_file, tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+    monkeypatch.setattr(cli, "collect_all", lambda cfg: _canned_results())
+
+    def boom(md):
+        raise cli.telegram.NotifyError("bot blocked by user")
+
+    monkeypatch.setattr(cli.telegram, "send_report", boom)
+    out = tmp_path / "r.md"
+    code = cli.main(["--config", str(config_file), "--dry-run", "--telegram", "--output", str(out)])
+    assert code == cli.EXIT_NOTIFY
+    assert out.exists()  # the report itself was still written
+
+
 def test_fetch_failure_topic_skips_llm_and_exits_3(config_file, tmp_path, monkeypatch):
     failed = TopicResult("AAPL", "AAPL", error="News fetch failed: all 3 sources errored")
     monkeypatch.setattr(cli, "collect_all", lambda cfg: [failed])
