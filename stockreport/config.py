@@ -44,6 +44,8 @@ class NewsConfig:
     require_ticker_mention: bool = True  # drop ticker-section items that never mention the ticker/company
     fallback_max_articles: int = 2  # quiet tickers: show this many most-recent items instead (0 disables)
     market_relevance_filter: bool = True  # LLM-screen market headlines for actual market relevance
+    market_candidate_pool: int = 30  # market items offered to the LLM ranking (covers the whole day)
+    market_source_cap: int = 2  # max market-pool items from any single publisher (stops feed bursts)
     market_feeds: list[str] = field(default_factory=lambda: list(DEFAULT_MARKET_FEEDS))
 
 
@@ -186,6 +188,12 @@ def _load_news(section: dict) -> NewsConfig:
             section.get("fallback_max_articles", cfg.fallback_max_articles),
             "news.fallback_max_articles",
             minimum=0,
+        ),
+        market_candidate_pool=_positive(
+            section.get("market_candidate_pool", cfg.market_candidate_pool), "news.market_candidate_pool"
+        ),
+        market_source_cap=_positive(
+            section.get("market_source_cap", cfg.market_source_cap), "news.market_source_cap"
         ),
         market_feeds=[f.strip() for f in feeds],
     )
