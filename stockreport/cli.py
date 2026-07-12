@@ -10,7 +10,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from . import __version__, summarizer
+from . import __version__, summarizer, telegram
 from .aggregator import collect_all
 from .config import AppConfig, ConfigError, load_config, normalize_tickers
 from .models import MARKET_TOPIC, TopicResult
@@ -23,6 +23,7 @@ EXIT_OK = 0
 EXIT_CONFIG = 1
 EXIT_PREFLIGHT = 2
 EXIT_PARTIAL = 3
+EXIT_NOTIFY = 4
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -43,6 +44,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Fetch news and build prompts but skip the LLM; writes a .dry-run.md report",
+    )
+    parser.add_argument(
+        "--telegram",
+        action="store_true",
+        help="Deliver the report to Telegram (needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser
@@ -82,6 +88,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.model:
         cfg.openrouter.model = args.model.strip()
     load_dotenv(cfg.base_dir / ".env")  # .env next to the config; real env vars win
+
+    if args.telegram:
+        try:
+            telegram.require_env()  # fail fast, before any fetching or API spend
+        except telegram.NotifyError as exc:
+            log.error("%s", exc)
+            return EXIT_PREFLIGHT
 
     if not args.dry_run:
         try:
@@ -151,6 +164,15 @@ def main(argv: list[str] | None = None) -> int:
         log.error("Could not write the report to %s: %s", output_path, exc)
         return EXIT_CONFIG
     log.info("Report written to %s", output_path.resolve())
+
+    if args.telegram:
+        try:
+            sent = telegram.send_report(markdown)
+        except Exception as exc:
+            log.error("Telegram delivery failed: %s", exc)
+            return EXIT_NOTIFY
+        log.info("Report delivered to Telegram in %d message(s)", sent)
+
     return EXIT_PARTIAL if any_error else EXIT_OK
 
 
