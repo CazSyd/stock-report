@@ -1,5 +1,5 @@
 import pytest
-from conftest import FIXED_NOW, make_item
+from conftest import make_item, now_utc
 
 import stockreport.aggregator as aggregator
 from stockreport.aggregator import (
@@ -41,7 +41,7 @@ def test_filter_recent_boundaries():
     kept = filter_recent(
         [make_item(hours_ago=23), make_item(hours_ago=25), make_item(published=None)],
         lookback_hours=24,
-        now=FIXED_NOW,
+        now=now_utc(),
     )
     assert len(kept) == 2
     assert kept[0].published is not None  # the 23h-old item survived
