@@ -12,8 +12,8 @@ from stockreport.summarizer import (
     _model_names,
     build_user_message,
     preflight,
+    rank_market_items,
     summarize_topic,
-    triage_market_items,
 )
 
 
@@ -140,27 +140,27 @@ class _TriageClient:
         return {"message": {"content": self.content}}
 
 
-def test_triage_market_items_parses_json():
-    client = _TriageClient('{"relevant": [3, 1, "2", 99, 1]}')
+def test_rank_market_items_preserves_model_ranking():
+    client = _TriageClient('{"ranked": [3, 1, "2", 99, 1]}')
     items = [make_item(title=f"T{i}", url=f"https://e.com/{i}") for i in range(4)]
-    kept = triage_market_items(client, OllamaConfig(), items)
-    # coerced, deduped, out-of-range dropped, recency (index) order restored
-    assert [i.title for i in kept] == ["T0", "T1", "T2"]
+    kept = rank_market_items(client, OllamaConfig(), items)
+    # coerced, deduped, out-of-range dropped; the model's order IS the ranking
+    assert [i.title for i in kept] == ["T2", "T0", "T1"]
     assert client.kwargs["format"] == "json"
     assert client.kwargs["options"]["temperature"] == 0.0
 
 
-def test_triage_market_items_regex_fallback_on_bad_json():
-    client = _TriageClient("Relevant items are 2 and 4.")
+def test_rank_market_items_regex_fallback_on_bad_json():
+    client = _TriageClient("Most important is 4, then 2.")
     items = [make_item(title=f"T{i}", url=f"https://e.com/{i}") for i in range(4)]
-    kept = triage_market_items(client, OllamaConfig(), items)
-    assert [i.title for i in kept] == ["T1", "T3"]
+    kept = rank_market_items(client, OllamaConfig(), items)
+    assert [i.title for i in kept] == ["T3", "T1"]  # appearance order = ranking
 
 
-def test_triage_market_items_empty_response():
-    client = _TriageClient('{"relevant": []}')
+def test_rank_market_items_empty_response():
+    client = _TriageClient('{"ranked": []}')
     items = [make_item(title="T0", url="https://e.com/0")]
-    assert triage_market_items(client, OllamaConfig(), items) == []
+    assert rank_market_items(client, OllamaConfig(), items) == []
 
 
 def test_summarize_topic_passes_fresh_context_per_call():
