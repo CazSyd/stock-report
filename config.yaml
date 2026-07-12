@@ -11,6 +11,9 @@ tickers:
   - NOW
   - RDDT
   - ASML
+  - MU
+  - NOC
+  - LMT
   - D05.SI # DBS Group, SGX
   - U96.SI # Sembcorp Industries, SGX
 
