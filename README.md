@@ -44,7 +44,8 @@ Options:
 | `--output path\to\report.md` | Write the report to an explicit path. |
 
 Exit codes: `0` success, `1` config error, `2` API key missing/invalid or OpenRouter
-unreachable, `3` report written but at least one topic failed (the report notes which).
+unreachable, `3` report written but at least one topic failed (the report notes which),
+`4` report written but Telegram delivery failed.
 
 ## Configuration
 
@@ -96,6 +97,30 @@ uv run pytest -q
 The suite (70 tests) covers config validation, feed parsing, yfinance schema
 normalization, dedup/time-filtering, prompt context budgeting, report rendering,
 and CLI exit codes. No network or API key needed.
+
+## Daily delivery via Telegram (GitHub Actions)
+
+`.github/workflows/daily-report.yml` generates the report every day at **07:30
+Singapore time** (cron `30 23 * * *` UTC; GitHub's scheduler can be 15–60 min
+late) and sends it to your Telegram chat as formatted messages. One-time setup:
+
+1. **Create the bot**: message [@BotFather](https://t.me/BotFather) on Telegram,
+   send `/newbot`, follow the prompts, and copy the bot token.
+2. **Get your chat id**: send your new bot any message (e.g. "hi"), then open
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser and copy
+   `message.chat.id` from the response.
+3. **Add the repository secrets** (GitHub → Settings → Secrets and variables →
+   Actions): `OPENROUTER_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
+4. **Commit `config.yaml`** — the workflow reads the ticker list from the repo,
+   so your config file must be committed (it contains no secrets).
+5. Test it: Actions tab → "Daily report" → **Run workflow**, or locally with
+   `uv run stockreport --telegram` (put the two Telegram values in `.env`).
+
+The report is converted to Telegram-native HTML formatting (bold sections,
+clickable source links) and split into a few messages at section boundaries;
+if Telegram ever rejects a message's formatting, it is resent as plain text so
+content is never lost. Each run also uploads the `.md` report as a workflow
+artifact (kept 30 days).
 
 ## Notes
 
