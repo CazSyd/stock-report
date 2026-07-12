@@ -67,6 +67,10 @@ Edit `config.yaml`:
   macro/central-bank news, geopolitics with market impact, and major M&A rank
   above routine single-stock notes. The section shows the top items in that
   order. Runs only in real runs; `--dry-run` shows the newest items unscreened.
+- `news.market_candidate_pool` / `news.market_source_cap` — how many candidates
+  the market ranking chooses from (default 30), and how many of those any single
+  publisher may contribute (default 2, so one outlet's syndication burst can't
+  crowd out the pool).
 - `news.fallback_max_articles` — when a ticker has no news inside the lookback
   window, its section shows this many most-recent items instead (however old),
   clearly labeled. `0` disables the fallback. Useful for quiet or non-US
