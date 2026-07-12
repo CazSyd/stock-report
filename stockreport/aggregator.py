@@ -16,8 +16,6 @@ log = logging.getLogger(__name__)
 
 MAX_WORKERS = 8
 GOOGLE_FALLBACK_HOURS = 30 * 24  # Google News search window when the fallback is enabled
-MARKET_TRIAGE_POOL = 30  # market candidates kept for the LLM relevance ranking (covers the whole day)
-MARKET_SOURCE_CAP = 3  # max market-pool items from any single publisher (stops feed bursts)
 
 _TRACKING_PREFIXES = ("utm_", "guce", "fbclid", "gclid", "ncid", "cmpid", "soc_src", "soc_trk")
 
@@ -138,7 +136,7 @@ def collect_all(cfg: AppConfig) -> list[TopicResult]:
         if topic == MARKET_TOPIC:
             # a syndication burst from one publisher must not crowd out the pool
             before = len(merged)
-            merged = diversify_by_source(merged, MARKET_SOURCE_CAP)
+            merged = diversify_by_source(merged, cfg.news.market_source_cap)
             if len(merged) < before:
                 log.info(
                     "%s: source-diversity cap dropped %d items from over-represented publishers",
@@ -147,7 +145,7 @@ def collect_all(cfg: AppConfig) -> list[TopicResult]:
                 )
             if cfg.news.market_relevance_filter:
                 # keep a larger pool; the LLM ranking in cli.py narrows it down
-                cap = max(cap, MARKET_TRIAGE_POOL)
+                cap = max(cap, cfg.news.market_candidate_pool)
         capped = merged[:cap]
         is_fallback = False
         if not capped and topic != MARKET_TOPIC and fallback_enabled:

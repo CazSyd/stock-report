@@ -25,9 +25,16 @@ news:
   # When a ticker has no news inside lookback_hours, show its N most recent
   # items instead, however old (0 disables this fallback).
   fallback_max_articles: 2
-  # Use the model to screen Market Overview headlines and drop items that do
-  # not affect markets (lifestyle trends, personal-finance advice, etc.).
+  # Use the model to screen Market Overview headlines: drop items that do not
+  # affect markets (lifestyle trends, personal-finance advice, etc.) and rank
+  # the rest by importance; the section shows the top ones.
   market_relevance_filter: true
+  # How many market candidates the ranking gets to choose from (larger = covers
+  # more of the day, slightly longer ranking prompt).
+  market_candidate_pool: 30
+  # Max market-pool items from any single publisher, so one outlet's
+  # syndication burst can't crowd out the pool.
+  market_source_cap: 2
   # Feeds used for the market-wide "Market Overview" section.
   market_feeds:
     - "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en"
