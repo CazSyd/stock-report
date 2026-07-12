@@ -1,7 +1,7 @@
 # DailyStockReport
 
 Generates a daily markdown briefing of breaking market news plus news for the tickers you
-care about, summarized by a local LLM running in [Ollama](https://ollama.com).
+care about, summarized by a free model on [OpenRouter](https://openrouter.ai).
 
 How it works:
 
@@ -11,7 +11,7 @@ How it works:
    - **Per ticker**: Yahoo Finance news (via `yfinance`), Google News search, Yahoo per-ticker RSS.
 3. Items are deduplicated, filtered to the lookback window (default 24h), and capped per topic.
 4. Each topic (every ticker + the market base) gets its **own fresh LLM session** — one
-   independent Ollama chat call — so no single context window has to hold everything.
+   independent chat completion — so no single context window has to hold everything.
 5. All summaries are compiled into a single report: `reports/YYYY-MM-DD.md`, with source
    links under every section.
 
@@ -21,9 +21,10 @@ How it works:
 # 1. Python environment (uv reads pyproject.toml)
 uv sync
 
-# 2. Ollama + model (one-time)
-# Install from https://ollama.com/download, then:
-ollama pull gemma3:12b
+# 2. OpenRouter API key (one-time)
+# Create a key at https://openrouter.ai/settings/keys, then:
+copy .env.example .env
+# ...and paste your key into .env
 ```
 
 ## Usage
@@ -36,14 +37,14 @@ Options:
 
 | Flag | Effect |
 |---|---|
-| `--dry-run` | Fetch news and build prompts but skip the LLM; writes `reports/<date>.dry-run.md` showing exactly what would be sent to the model. Works without Ollama installed. |
+| `--dry-run` | Fetch news and build prompts but skip the LLM; writes `reports/<date>.dry-run.md` showing exactly what would be sent to the model. Works without an API key. |
 | `--tickers AAPL,TSLA` | Override the ticker list from the config for this run. |
-| `--model llama3.1:8b` | Override the model for this run. |
+| `--model meta-llama/llama-3.3-70b-instruct:free` | Override the model for this run. |
 | `--config path\to\file.yaml` | Use a different config file. |
 | `--output path\to\report.md` | Write the report to an explicit path. |
 
-Exit codes: `0` success, `1` config error, `2` Ollama unreachable / model not pulled,
-`3` report written but at least one topic failed to summarize (the report notes which).
+Exit codes: `0` success, `1` config error, `2` API key missing/invalid or OpenRouter
+unreachable, `3` report written but at least one topic failed (the report notes which).
 
 ## Configuration
 
@@ -52,9 +53,16 @@ Edit `config.yaml`:
 - `tickers` — Yahoo Finance symbol format (e.g. `BRK-B`, not `BRK.B`). Non-US
   listings need their exchange suffix: `D05.SI` (SGX), `SIVE.ST` (Stockholm),
   `7203.T` (Tokyo) — a bare `D05` is not a valid Yahoo symbol and returns nothing.
-- `ollama.model` — any model you have pulled; `ollama list` shows what's installed.
-- `ollama.options.num_ctx` — context window. The news prompt is automatically budgeted to
-  fit it; raise it (e.g. 16384) if you want more articles per topic considered.
+- `openrouter.model` — any **free** model (the `:free` suffix is enforced; browse
+  [openrouter.ai/models?max_price=0](https://openrouter.ai/models?max_price=0)).
+- `openrouter.fallback_models` — tried in order when the primary model's free
+  endpoints are saturated (429s). Each must also be `:free`; set `[]` to disable.
+- `openrouter.dynamic_fallback` — when the entire configured chain is saturated,
+  fetch OpenRouter's live catalog and keep trying other free models (largest
+  context first) until one answers. `false` to disable.
+- `openrouter.context_tokens` / `openrouter.max_tokens` — the news prompt is budgeted to
+  fit `context_tokens` minus the completion reserve; raise `context_tokens` if you want
+  more article text per topic considered.
 - `news.max_articles_per_topic` — top N most recent items per section (default 5).
 - `news.require_ticker_mention` — when `true` (default), a ticker's section only
   keeps items whose title or snippet mentions the ticker symbol or company name;
@@ -87,12 +95,14 @@ uv run pytest -q
 
 The suite (70 tests) covers config validation, feed parsing, yfinance schema
 normalization, dedup/time-filtering, prompt context budgeting, report rendering,
-and CLI exit codes. No network or Ollama needed.
+and CLI exit codes. No network or API key needed.
 
 ## Notes
 
-- The first summarization call after a while is slow (30–90s) because Ollama loads the
-  model into VRAM; `keep_alive: "10m"` keeps it resident for the rest of the run.
+- **Free-tier rate limits:** OpenRouter's free models are rate-limited (roughly 20
+  requests/minute; ~50 requests/day without a credit balance, 1000/day if your account
+  holds $10+ of credit). One run makes 1 ranking call + 1 call per topic — a 13-ticker
+  run is ~15 requests. The client automatically retries `429`s with backoff.
 - Rerunning on the same day overwrites that day's report.
 - A ticker with no news in the lookback window gets a note instead of a summary (and no
   LLM call is made for it).
