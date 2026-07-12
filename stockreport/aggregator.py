@@ -16,7 +16,8 @@ log = logging.getLogger(__name__)
 
 MAX_WORKERS = 8
 GOOGLE_FALLBACK_HOURS = 30 * 24  # Google News search window when the fallback is enabled
-MARKET_TRIAGE_POOL = 20  # market candidates kept for the LLM relevance triage
+MARKET_TRIAGE_POOL = 30  # market candidates kept for the LLM relevance ranking (covers the whole day)
+MARKET_SOURCE_CAP = 3  # max market-pool items from any single publisher (stops feed bursts)
 
 _TRACKING_PREFIXES = ("utm_", "guce", "fbclid", "gclid", "ncid", "cmpid", "soc_src", "soc_trk")
 
@@ -134,9 +135,19 @@ def collect_all(cfg: AppConfig) -> list[TopicResult]:
         merged = dedupe(filter_recent(topic_items, cfg.news.lookback_hours, now))
         merged.sort(key=_recency_key)
         cap = cfg.news.max_articles_per_topic
-        if topic == MARKET_TOPIC and cfg.news.market_relevance_filter:
-            # keep a larger pool; the LLM triage in cli.py narrows it down
-            cap = max(cap, MARKET_TRIAGE_POOL)
+        if topic == MARKET_TOPIC:
+            # a syndication burst from one publisher must not crowd out the pool
+            before = len(merged)
+            merged = diversify_by_source(merged, MARKET_SOURCE_CAP)
+            if len(merged) < before:
+                log.info(
+                    "%s: source-diversity cap dropped %d items from over-represented publishers",
+                    topic,
+                    before - len(merged),
+                )
+            if cfg.news.market_relevance_filter:
+                # keep a larger pool; the LLM ranking in cli.py narrows it down
+                cap = max(cap, MARKET_TRIAGE_POOL)
         capped = merged[:cap]
         is_fallback = False
         if not capped and topic != MARKET_TOPIC and fallback_enabled:
@@ -183,6 +194,19 @@ def build_relevance_pattern(ticker: str, aliases: list[str]) -> re.Pattern:
 
 def filter_relevant(items: list[NewsItem], pattern: re.Pattern) -> list[NewsItem]:
     return [i for i in items if pattern.search(i.title) or pattern.search(i.summary)]
+
+
+def diversify_by_source(items: list[NewsItem], per_source_cap: int) -> list[NewsItem]:
+    """Keep at most per_source_cap items per publisher, preserving order."""
+    counts: dict[str, int] = {}
+    out: list[NewsItem] = []
+    for item in items:
+        key = (item.source or "unknown").lower()
+        if counts.get(key, 0) >= per_source_cap:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        out.append(item)
+    return out
 
 
 def dedupe(items: list[NewsItem]) -> list[NewsItem]:
