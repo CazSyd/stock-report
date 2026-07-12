@@ -5,14 +5,23 @@ tickers:
   - AMZN
   - D05.SI # DBS Group, SGX
 
-ollama:
-  host: "http://localhost:11434"
-  model: "gemma3:12b"
-  timeout_seconds: 300 # generous: the first call also loads the model into VRAM
-  keep_alive: "10m" # keep the model loaded between per-topic calls
-  options:
-    temperature: 0.3
-    num_ctx: 8192 # context window; the news prompt is budgeted to fit this
+# API key comes from the OPENROUTER_API_KEY environment variable (.env file).
+openrouter:
+  # Must be a free model (":free" suffix). Browse: https://openrouter.ai/models?max_price=0
+  # Alternatives: meta-llama/llama-3.3-70b-instruct:free, openai/gpt-oss-120b:free
+  model: "google/gemma-4-31b-it:free"
+  # Tried in order when the model above is saturated (community free pools 429
+  # often; the NVIDIA-hosted ones have dedicated capacity and tend to stay up).
+  fallback_models:
+    - "nvidia/nemotron-3-super-120b-a12b:free"
+    - "nvidia/nemotron-3-nano-30b-a3b:free"
+  # If the whole chain above is saturated, discover whatever free models are
+  # live right now and try those too.
+  dynamic_fallback: true
+  timeout_seconds: 120
+  temperature: 0.3
+  max_tokens: 1500 # completion length cap per topic
+  context_tokens: 32768 # prompt budgeting; current free models all offer at least this
 
 news:
   lookback_hours: 24 # only include news newer than this
