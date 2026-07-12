@@ -19,6 +19,8 @@ def test_minimal_config_gets_defaults(tmp_path):
     assert cfg.news.require_ticker_mention is True
     assert cfg.news.fallback_max_articles == 2
     assert cfg.news.market_relevance_filter is True
+    assert cfg.news.market_candidate_pool == 30
+    assert cfg.news.market_source_cap == 2
     assert cfg.output_dir == "reports"
     assert cfg.base_dir == tmp_path.resolve()
 
@@ -111,6 +113,16 @@ def test_require_ticker_mention_must_be_bool(tmp_path):
 def test_market_relevance_filter_must_be_bool(tmp_path):
     with pytest.raises(ConfigError, match="market_relevance_filter"):
         load_config(write(tmp_path, "tickers: [A]\nnews:\n  market_relevance_filter: 5\n"))
+
+
+def test_market_pool_settings_validated(tmp_path):
+    cfg = load_config(write(tmp_path, "tickers: [A]\nnews:\n  market_candidate_pool: 15\n  market_source_cap: 5\n"))
+    assert cfg.news.market_candidate_pool == 15
+    assert cfg.news.market_source_cap == 5
+    with pytest.raises(ConfigError, match="market_candidate_pool"):
+        load_config(write(tmp_path, "tickers: [A]\nnews:\n  market_candidate_pool: 0\n"))
+    with pytest.raises(ConfigError, match="market_source_cap"):
+        load_config(write(tmp_path, "tickers: [A]\nnews:\n  market_source_cap: 0\n"))
 
 
 def test_market_feeds_must_be_list(tmp_path):

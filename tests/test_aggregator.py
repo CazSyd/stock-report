@@ -99,11 +99,11 @@ def test_collect_all_filters_before_dedupe(monkeypatch):
 
 
 def test_collect_all_sorts_newest_first_and_caps(monkeypatch):
-    items = [
-        make_item(title="old", url="https://e.com/1", hours_ago=3),
-        make_item(title="undated", url="https://e.com/2", published=None),
-        make_item(title="newest", url="https://e.com/3", hours_ago=1),
-        make_item(title="mid", url="https://e.com/4", hours_ago=2),
+    items = [  # distinct sources so the market source-diversity cap stays out of the way
+        make_item(title="old", url="https://e.com/1", hours_ago=3, source="A"),
+        make_item(title="undated", url="https://e.com/2", published=None, source="B"),
+        make_item(title="newest", url="https://e.com/3", hours_ago=1, source="C"),
+        make_item(title="mid", url="https://e.com/4", hours_ago=2, source="D"),
     ]
     monkeypatch.setattr(aggregator.sources, "fetch_market_feed", lambda u, t: list(items))
     results = collect_all(_cfg(tickers=(), max_articles_per_topic=3))
@@ -255,21 +255,21 @@ def test_collect_all_market_pool_is_source_diverse(monkeypatch):
         for i in range(5)
     ]
     monkeypatch.setattr(aggregator.sources, "fetch_market_feed", lambda u, t: burst + others)
-    market = collect_all(_cfg(tickers=(), market_relevance_filter=True))[0]
+    market = collect_all(_cfg(tickers=(), market_relevance_filter=True, market_source_cap=3))[0]
     assert len([i for i in market.items if i.source == "Insider Monkey"]) == 3
     assert all(f"Real {i}" in [x.title for x in market.items] for i in range(5))
 
 
-def test_collect_all_market_keeps_triage_pool(monkeypatch):
+def test_collect_all_market_keeps_candidate_pool(monkeypatch):
     items = [
         make_item(title=f"T{i}", url=f"https://m.com/{i}", hours_ago=1, source=f"Outlet {i % 10}")
         for i in range(30)
     ]
     monkeypatch.setattr(aggregator.sources, "fetch_market_feed", lambda u, t: list(items))
-    with_triage = collect_all(_cfg(tickers=(), market_relevance_filter=True))[0]
-    assert len(with_triage.items) == aggregator.MARKET_TRIAGE_POOL  # pool for the LLM to screen
-    without_triage = collect_all(_cfg(tickers=(), market_relevance_filter=False))[0]
-    assert len(without_triage.items) == 5  # straight to the section cap
+    with_ranking = collect_all(_cfg(tickers=(), market_relevance_filter=True, market_candidate_pool=12))[0]
+    assert len(with_ranking.items) == 12  # configured pool for the LLM to rank
+    without_ranking = collect_all(_cfg(tickers=(), market_relevance_filter=False))[0]
+    assert len(without_ranking.items) == 5  # straight to the section cap
 
 
 def test_collect_all_malformed_feed_url_does_not_crash(monkeypatch):
