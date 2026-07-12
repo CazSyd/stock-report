@@ -23,16 +23,25 @@ DEFAULT_MARKET_FEEDS = [
     "https://feeds.content.dowjones.io/public/rss/mw_topstories",
 ]
 
-DEFAULT_OLLAMA_OPTIONS = {"temperature": 0.3, "num_ctx": 8192}
+# NVIDIA-hosted free endpoints have dedicated first-party capacity, so they
+# tend to stay up when the shared community free pools are saturated.
+DEFAULT_FALLBACK_MODELS = [
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
+]
 
 
 @dataclass
-class OllamaConfig:
-    host: str = "http://localhost:11434"
-    model: str = "gemma3:12b"
-    timeout_seconds: int = 300
-    keep_alive: str | int | float = "10m"  # duration string, or plain seconds (Ollama accepts both)
-    options: dict = field(default_factory=lambda: dict(DEFAULT_OLLAMA_OPTIONS))
+class OpenRouterConfig:
+    model: str = "google/gemma-4-31b-it:free"  # only :free models are allowed
+    timeout_seconds: int = 120
+    temperature: float = 0.3
+    max_tokens: int = 1500  # completion cap per topic
+    context_tokens: int = 32768  # prompt budgeting (current free models all offer >= 32k)
+    # tried in order when the primary model is saturated (free tiers 429 often)
+    fallback_models: list[str] = field(default_factory=lambda: list(DEFAULT_FALLBACK_MODELS))
+    # last resort: discover whatever :free models are live right now and try those
+    dynamic_fallback: bool = True
 
 
 @dataclass
@@ -52,7 +61,7 @@ class NewsConfig:
 @dataclass
 class AppConfig:
     tickers: list[str]
-    ollama: OllamaConfig = field(default_factory=OllamaConfig)
+    openrouter: OpenRouterConfig = field(default_factory=OpenRouterConfig)
     news: NewsConfig = field(default_factory=NewsConfig)
     output_dir: str = "reports"
     base_dir: Path = field(default_factory=Path.cwd)  # anchor for a relative output_dir
@@ -69,7 +78,7 @@ def load_config(path: Path) -> AppConfig:
         raise ConfigError("Config root must be a mapping (key: value pairs)")
 
     tickers = _load_tickers(raw)
-    ollama = _load_ollama(_section(raw, "ollama"))
+    openrouter = _load_openrouter(_section(raw, "openrouter"))
     news = _load_news(_section(raw, "news"))
     report = _section(raw, "report")
     output_dir = report.get("output_dir", "reports")
@@ -78,7 +87,7 @@ def load_config(path: Path) -> AppConfig:
 
     return AppConfig(
         tickers=tickers,
-        ollama=ollama,
+        openrouter=openrouter,
         news=news,
         output_dir=output_dir.strip(),
         base_dir=path.resolve().parent,
@@ -119,45 +128,45 @@ def _load_tickers(raw: dict) -> list[str]:
     return normalize_tickers(tickers_raw, "config 'tickers'")
 
 
-def _load_ollama(section: dict) -> OllamaConfig:
-    cfg = OllamaConfig()
-    host = section.get("host", cfg.host)
-    model = section.get("model", cfg.model)
-    if not isinstance(host, str) or not host.strip():
-        raise ConfigError("'ollama.host' must be a non-empty string")
-    if not isinstance(model, str) or not model.strip():
-        raise ConfigError("'ollama.model' must be a non-empty string")
-    keep_alive = section.get("keep_alive", cfg.keep_alive)
-    if isinstance(keep_alive, bool) or not isinstance(keep_alive, (str, int, float)):
-        raise ConfigError("'ollama.keep_alive' must be a duration string like \"10m\" or a number of seconds")
-    options = dict(DEFAULT_OLLAMA_OPTIONS)
-    user_options = section.get("options")
-    if user_options is not None:
-        if not isinstance(user_options, dict):
-            raise ConfigError("'ollama.options' must be a mapping")
-        options.update(user_options)
-    _coerce_option(options, "num_ctx", int)
-    _coerce_option(options, "temperature", float)
-    return OllamaConfig(
-        host=host.strip().rstrip("/"),
-        model=model.strip(),
-        timeout_seconds=_positive(section.get("timeout_seconds", cfg.timeout_seconds), "ollama.timeout_seconds"),
-        keep_alive=keep_alive,
-        options=options,
+def _load_openrouter(section: dict) -> OpenRouterConfig:
+    cfg = OpenRouterConfig()
+    model = _free_model(section.get("model", cfg.model), "openrouter.model")
+    fallbacks_raw = section.get("fallback_models", cfg.fallback_models)
+    if not isinstance(fallbacks_raw, list):
+        raise ConfigError("'openrouter.fallback_models' must be a list of model ids (may be empty)")
+    fallback_models = [_free_model(m, "openrouter.fallback_models") for m in fallbacks_raw]
+    dynamic_fallback = section.get("dynamic_fallback", cfg.dynamic_fallback)
+    if not isinstance(dynamic_fallback, bool):
+        raise ConfigError("'openrouter.dynamic_fallback' must be true or false")
+    temperature = section.get("temperature", cfg.temperature)
+    if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not 0 <= temperature <= 2:
+        raise ConfigError(f"'openrouter.temperature' must be a number between 0 and 2, got {temperature!r}")
+    return OpenRouterConfig(
+        model=model,
+        timeout_seconds=_positive(
+            section.get("timeout_seconds", cfg.timeout_seconds), "openrouter.timeout_seconds"
+        ),
+        temperature=float(temperature),
+        max_tokens=_positive(section.get("max_tokens", cfg.max_tokens), "openrouter.max_tokens"),
+        context_tokens=_positive(
+            section.get("context_tokens", cfg.context_tokens), "openrouter.context_tokens"
+        ),
+        fallback_models=fallback_models,
+        dynamic_fallback=dynamic_fallback,
     )
 
 
-def _coerce_option(options: dict, key: str, kind) -> None:
-    """The Ollama server type-checks options, so a quoted number in YAML must be
-    coerced here or every chat call fails with a 400 later."""
-    if key not in options:
-        return
-    try:
-        options[key] = kind(options[key])
-    except (TypeError, ValueError) as exc:
-        raise ConfigError(f"'ollama.options.{key}' must be a {kind.__name__}, got {options[key]!r}") from exc
-    if key == "num_ctx" and options[key] <= 0:
-        raise ConfigError(f"'ollama.options.num_ctx' must be positive, got {options[key]!r}")
+def _free_model(value, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"'{name}' must be a non-empty string")
+    model = value.strip()
+    if not model.endswith(":free"):
+        raise ConfigError(
+            f"'{name}' must be a free model (ending in ':free'), got '{model}'. "
+            "This project only uses free OpenRouter models; browse them at "
+            "https://openrouter.ai/models?max_price=0"
+        )
+    return model
 
 
 def _load_news(section: dict) -> NewsConfig:
