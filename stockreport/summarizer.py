@@ -139,21 +139,27 @@ def summarize_topic(client: ollama.Client, cfg: OllamaConfig, user_message: str)
     return text
 
 
-TRIAGE_SYSTEM_PROMPT = """You screen headlines for the market-overview section of a daily stock report.
-You will be given a numbered list of news items. An item is RELEVANT if it can
-affect financial markets or matters to investors: macroeconomics, central banks,
-interest rates, market indices, notable company or sector news, commodities,
-or geopolitics with market impact.
-An item is NOT relevant if it is a lifestyle or social-media trend, a
-personal-finance advice or individual money story, a product review, a
-human-interest piece, or daily service journalism such as "best CD rates today"
-or "mortgage rates today".
-Respond with JSON only, in the form {"relevant": [1, 4, 7]} listing the numbers
-of the relevant items."""
+RANK_SYSTEM_PROMPT = """You screen and rank headlines for the market-overview section of a daily stock report.
+You will be given a numbered list of news items.
+
+First, discard items that do not matter to financial markets or investors:
+lifestyle and social-media trends, personal-finance advice and individual money
+stories, product reviews, human-interest pieces, and daily service journalism
+such as "best CD rates today" or "mortgage rates today".
+
+Then rank the remaining items by importance to markets, most important first.
+Importance means the breadth and size of the likely market impact: macroeconomic
+data and central-bank decisions, wars, sanctions and geopolitics with market
+consequences, index-level moves, major M&A, and mega-cap company news all rank
+above routine single-stock analyst notes or small-cap items.
+
+Respond with JSON only, in the form {"ranked": [7, 1, 4]} listing the numbers
+of the relevant items from most to least important."""
 
 
-def triage_market_items(client: ollama.Client, cfg: OllamaConfig, items: list[NewsItem]) -> list[NewsItem]:
-    """One cheap JSON-mode call that returns the market-relevant subset of items."""
+def rank_market_items(client: ollama.Client, cfg: OllamaConfig, items: list[NewsItem]) -> list[NewsItem]:
+    """One cheap JSON-mode call: drop non-market items and rank the rest by
+    importance. Returns the kept items most-important-first."""
     lines = []
     for index, item in enumerate(items, start=1):
         line = f"[{index}] {item.title}"
@@ -163,7 +169,7 @@ def triage_market_items(client: ollama.Client, cfg: OllamaConfig, items: list[Ne
     response = client.chat(
         model=cfg.model,
         messages=[
-            {"role": "system", "content": TRIAGE_SYSTEM_PROMPT},
+            {"role": "system", "content": RANK_SYSTEM_PROMPT},
             {"role": "user", "content": "\n".join(lines)},
         ],
         options={**cfg.options, "temperature": 0.0},
@@ -172,7 +178,7 @@ def triage_market_items(client: ollama.Client, cfg: OllamaConfig, items: list[Ne
     )
     content = re.sub(r"<think>.*?</think>", "", _response_content(response), flags=re.DOTALL)
     try:
-        numbers = json.loads(content).get("relevant", [])
+        numbers = json.loads(content).get("ranked", [])
     except (json.JSONDecodeError, AttributeError):
         numbers = re.findall(r"\d+", content)
     kept_indices: list[int] = []
@@ -183,7 +189,7 @@ def triage_market_items(client: ollama.Client, cfg: OllamaConfig, items: list[Ne
             continue
         if 1 <= index <= len(items) and index not in kept_indices:
             kept_indices.append(index)
-    kept_indices.sort()  # preserve recency order regardless of how the model listed them
+    # the model's order IS the ranking - do not re-sort
     return [items[index - 1] for index in kept_indices]
 
 
