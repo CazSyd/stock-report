@@ -116,25 +116,28 @@ def _patch_llm(monkeypatch):
     monkeypatch.setattr(cli.summarizer, "summarize_topic", lambda c, cfg, m: "- summary")
 
 
-def test_market_triage_filters_and_caps(config_file, tmp_path, monkeypatch):
+def test_market_ranking_filters_and_caps(config_file, tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "collect_all", lambda cfg: _market_results())
     _patch_llm(monkeypatch)
-    monkeypatch.setattr(cli.summarizer, "triage_market_items", lambda c, cfg, items: items[2:5])
+    # model says: M6 most important, then M2, then M4
+    monkeypatch.setattr(
+        cli.summarizer, "rank_market_items", lambda c, cfg, items: [items[6], items[2], items[4]]
+    )
     out = tmp_path / "r.md"
     assert cli.main(["--config", str(config_file), "--output", str(out)]) == cli.EXIT_OK
     content = out.read_text(encoding="utf-8")
-    assert "M2" in content and "M4" in content
-    assert "M0" not in content and "M7" not in content  # triaged away
+    assert content.index("M6") < content.index("M2") < content.index("M4")  # importance order kept
+    assert "M0" not in content and "M7" not in content  # screened out
 
 
-def test_market_triage_failure_falls_back_to_newest(config_file, tmp_path, monkeypatch):
+def test_market_ranking_failure_falls_back_to_newest(config_file, tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "collect_all", lambda cfg: _market_results())
     _patch_llm(monkeypatch)
 
     def boom(c, cfg, items):
         raise RuntimeError("json mode unsupported")
 
-    monkeypatch.setattr(cli.summarizer, "triage_market_items", boom)
+    monkeypatch.setattr(cli.summarizer, "rank_market_items", boom)
     out = tmp_path / "r.md"
     assert cli.main(["--config", str(config_file), "--output", str(out)]) == cli.EXIT_OK
     content = out.read_text(encoding="utf-8")
@@ -142,13 +145,13 @@ def test_market_triage_failure_falls_back_to_newest(config_file, tmp_path, monke
     assert "M5" not in content
 
 
-def test_dry_run_never_calls_triage(config_file, tmp_path, monkeypatch):
+def test_dry_run_never_calls_ranking(config_file, tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "collect_all", lambda cfg: _market_results())
 
     def must_not_run(c, cfg, items):
-        raise AssertionError("triage must not run in dry-run mode")
+        raise AssertionError("ranking must not run in dry-run mode")
 
-    monkeypatch.setattr(cli.summarizer, "triage_market_items", must_not_run)
+    monkeypatch.setattr(cli.summarizer, "rank_market_items", must_not_run)
     out = tmp_path / "r.md"
     assert cli.main(["--config", str(config_file), "--dry-run", "--output", str(out)]) == cli.EXIT_OK
 
