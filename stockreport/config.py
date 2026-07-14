@@ -36,7 +36,7 @@ class OpenRouterConfig:
     model: str = "google/gemma-4-31b-it:free"  # only :free models are allowed
     timeout_seconds: int = 120
     temperature: float = 0.3
-    max_tokens: int = 1500  # completion cap per topic
+    max_tokens: int = 4000  # completion cap per topic; reasoning models spend thinking tokens from this too
     context_tokens: int = 32768  # prompt budgeting (current free models all offer >= 32k)
     # tried in order when the primary model is saturated (free tiers 429 often)
     fallback_models: list[str] = field(default_factory=lambda: list(DEFAULT_FALLBACK_MODELS))
