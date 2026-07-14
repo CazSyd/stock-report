@@ -20,7 +20,9 @@ openrouter:
   dynamic_fallback: true
   timeout_seconds: 120
   temperature: 0.3
-  max_tokens: 1500 # completion length cap per topic
+  # Completion cap per topic. Reasoning models (e.g. the nemotrons) spend their
+  # "thinking" tokens from this budget too - keep it roomy or answers truncate.
+  max_tokens: 4000
   context_tokens: 32768 # prompt budgeting; current free models all offer at least this
 
 news:
