@@ -121,9 +121,21 @@ class OpenRouterClient:
                 continue
             data = response.json()
             try:
-                content = data["choices"][0]["message"]["content"]
+                choice = data["choices"][0]
+                content = choice["message"]["content"]
             except (KeyError, IndexError, TypeError) as exc:
                 raise RuntimeError(f"unexpected OpenRouter response shape: {str(data)[:300]}") from exc
+            if choice.get("finish_reason") == "length":
+                # a truncated answer is garbage (often a cut-off reasoning
+                # transcript) - treat it as a failure and try the next model
+                last_error = RuntimeError(f"{model} hit the token limit before finishing its answer")
+                if position + 1 < len(models):
+                    log.warning(
+                        "Model %s returned a truncated response; falling back to %s",
+                        model,
+                        models[position + 1],
+                    )
+                continue
             if model != self.cfg.model:
                 log.info("Fallback model %s answered", model)
             return (content or "").strip(), model
