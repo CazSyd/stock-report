@@ -14,7 +14,7 @@ def test_minimal_config_gets_defaults(tmp_path):
     assert cfg.tickers == ["AAPL", "MSFT"]  # uppercased and deduped
     assert cfg.openrouter.model.endswith(":free")
     assert cfg.openrouter.temperature == 0.3
-    assert cfg.openrouter.max_tokens == 1500
+    assert cfg.openrouter.max_tokens == 4000
     assert cfg.openrouter.context_tokens == 32768
     assert cfg.news.market_feeds == DEFAULT_MARKET_FEEDS
     assert cfg.news.max_articles_per_topic == 5
