@@ -94,8 +94,8 @@ class FakeResponse:
             raise summarizer.requests.HTTPError(f"HTTP {self.status_code}")
 
 
-def _chat_response(content):
-    return FakeResponse(200, {"choices": [{"message": {"content": content}}]})
+def _chat_response(content, finish_reason="stop"):
+    return FakeResponse(200, {"choices": [{"message": {"content": content}, "finish_reason": finish_reason}]})
 
 
 def test_client_posts_expected_payload(monkeypatch):
@@ -117,7 +117,7 @@ def test_client_posts_expected_payload(monkeypatch):
         {"role": "user", "content": "usr"},
     ]
     assert captured["json"]["temperature"] == 0.3
-    assert captured["json"]["max_tokens"] == 1500
+    assert captured["json"]["max_tokens"] == cfg.max_tokens
     assert captured["timeout"] == 120
 
 
@@ -182,6 +182,34 @@ def test_client_falls_back_to_next_model_when_saturated(monkeypatch):
     assert OpenRouterClient(cfg, "k").chat("s", "u") == ("from fallback", "backup/model:free")
     # primary tried MAX_ATTEMPTS times, then the fallback once
     assert models_called == ["primary/model:free"] * summarizer.MAX_ATTEMPTS + ["backup/model:free"]
+
+
+def test_client_falls_back_on_truncated_response(monkeypatch):
+    # regression: a reasoning model that hit max_tokens returned its cut-off
+    # thinking transcript as the "summary" (the LMT incident)
+    models_called = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        models_called.append(json["model"])
+        if json["model"] == "primary/model:free":
+            return _chat_response("We need to produce a concise summary. Let's parse each item...", "length")
+        return _chat_response("- Proper summary")
+
+    monkeypatch.setattr(summarizer.requests, "post", fake_post)
+    cfg = OpenRouterConfig(model="primary/model:free", fallback_models=["backup/model:free"])
+    assert OpenRouterClient(cfg, "k").chat("s", "u") == ("- Proper summary", "backup/model:free")
+    # truncation is not a rate limit: the model is not marked saturated, just skipped this call
+    assert models_called == ["primary/model:free", "backup/model:free"]
+
+
+def test_client_raises_when_all_responses_truncated(monkeypatch):
+    def fake_post(url, json=None, headers=None, timeout=None):
+        return _chat_response("truncated thinking...", "length")
+
+    monkeypatch.setattr(summarizer.requests, "post", fake_post)
+    cfg = OpenRouterConfig(model="a/b:free", fallback_models=[], dynamic_fallback=False)
+    with pytest.raises(RuntimeError, match="token limit"):
+        OpenRouterClient(cfg, "k").chat("s", "u")
 
 
 def test_client_skips_saturated_model_on_later_calls(monkeypatch):
