@@ -90,9 +90,11 @@ class OpenRouterClient:
         """Return (content, model_that_answered).
 
         Try the configured chain, then dynamically discovered free models.
-        Free-tier endpoints saturate regularly (429 'Provider returned error'),
-        so switching models recovers where retrying the same one would not.
-        A model that exhausted its retries is skipped for the rest of the run."""
+        Free-tier endpoints saturate regularly - as HTTP 429s, and sometimes as
+        an HTTP 200 whose body is an error object (upstream failures like
+        Nvidia's ResourceExhausted are relayed that way) - so switching models
+        recovers where retrying the same one would not. A model that exhausted
+        its retries is skipped for the rest of the run."""
         models = self._candidate_models()
         last_error: RuntimeError | None = None
         for position, model in enumerate(models):
@@ -119,12 +121,25 @@ class OpenRouterClient:
                 if position + 1 < len(models):
                     log.warning("Model %s failed (%s); falling back to %s", model, exc, models[position + 1])
                 continue
-            data = response.json()
+            try:
+                data = response.json()
+            except ValueError:
+                data = (response.text or "")[:300]
             try:
                 choice = data["choices"][0]
                 content = choice["message"]["content"]
-            except (KeyError, IndexError, TypeError) as exc:
-                raise RuntimeError(f"unexpected OpenRouter response shape: {str(data)[:300]}") from exc
+            except (KeyError, IndexError, TypeError):
+                # error bodies were already turned into RuntimeErrors by
+                # _post_with_retry, so this is one model's garbage, not a
+                # run-ender: skip to the next candidate
+                last_error = RuntimeError(f"unexpected OpenRouter response shape: {str(data)[:300]}")
+                if position + 1 < len(models):
+                    log.warning(
+                        "Model %s returned an unexpected response shape; falling back to %s",
+                        model,
+                        models[position + 1],
+                    )
+                continue
             if choice.get("finish_reason") == "length":
                 # a truncated answer is garbage (often a cut-off reasoning
                 # transcript) - treat it as a failure and try the next model
@@ -132,6 +147,18 @@ class OpenRouterClient:
                 if position + 1 < len(models):
                     log.warning(
                         "Model %s returned a truncated response; falling back to %s",
+                        model,
+                        models[position + 1],
+                    )
+                continue
+            if choice.get("error") or choice.get("finish_reason") == "error" or not (content or "").strip():
+                # the provider died mid-generation (OpenRouter attaches the
+                # error to the choice) or sent nothing back - same recovery
+                detail = choice.get("error") or f"finish_reason={choice.get('finish_reason')!r}, empty content"
+                last_error = RuntimeError(f"{model} returned no usable answer: {str(detail)[:200]}")
+                if position + 1 < len(models):
+                    log.warning(
+                        "Model %s returned no usable answer; falling back to %s",
                         model,
                         models[position + 1],
                     )
@@ -196,19 +223,37 @@ def _post_with_retry(url: str, payload: dict, api_key: str, timeout: int) -> req
                 time.sleep(delay)
                 continue
             raise RuntimeError(f"OpenRouter request failed: {exc}") from exc
-        if response.status_code < 400:
+        status = response.status_code if response.status_code >= 400 else _embedded_error_code(response)
+        if status is None:
             return response
         message = _error_message(response)
-        retryable = response.status_code == 429 or response.status_code >= 500
+        retryable = status == 429 or status >= 500
         if retryable and attempt < MAX_ATTEMPTS:
             delay = _retry_delay(response, attempt)
-            log.warning(
-                "OpenRouter returned %d (%s); retrying in %.0fs", response.status_code, message, delay
-            )
+            log.warning("OpenRouter returned %d (%s); retrying in %.0fs", status, message, delay)
             time.sleep(delay)
             continue
-        raise RuntimeError(f"OpenRouter request failed ({response.status_code}): {message}")
+        raise RuntimeError(f"OpenRouter request failed ({status}): {message}")
     raise RuntimeError("OpenRouter request failed: retries exhausted")
+
+
+def _embedded_error_code(response: requests.Response) -> int | None:
+    """Error code hidden in a success-status response, or None for a real success.
+
+    OpenRouter relays some upstream provider failures as HTTP 200 with an error
+    object body, e.g. {"error": {"message": "Upstream error from Nvidia:
+    ResourceExhausted: ...", "code": 502}}. Treat those like their HTTP-status
+    twins so they get the same retry-then-fall-back handling."""
+    try:
+        error = response.json().get("error")
+    except (ValueError, AttributeError):  # not JSON / not a JSON object
+        return None  # let chat()'s response-shape guard describe it
+    if not isinstance(error, dict):
+        return None
+    try:
+        return int(error.get("code"))
+    except (TypeError, ValueError):
+        return 502  # an error without a usable code is still an upstream failure
 
 
 def _error_message(response: requests.Response) -> str:
