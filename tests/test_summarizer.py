@@ -212,6 +212,153 @@ def test_client_raises_when_all_responses_truncated(monkeypatch):
         OpenRouterClient(cfg, "k").chat("s", "u")
 
 
+def _embedded_error_response(
+    code=502,
+    message="Upstream error from Nvidia: ResourceExhausted: Worker local total request limit reached (33/32)",
+):
+    # OpenRouter relays upstream provider failures as HTTP 200 + error body
+    return FakeResponse(200, {"error": {"message": message, "code": code}})
+
+
+def test_client_retries_embedded_error_body_then_succeeds(monkeypatch):
+    # regression: a 200-with-error-body crashed the topic with "unexpected
+    # OpenRouter response shape" instead of being retried like an HTTP 502
+    responses = [_embedded_error_response(), _chat_response("recovered")]
+    calls = []
+
+    def fake_post(*args, **kwargs):
+        calls.append(1)
+        return responses[len(calls) - 1]
+
+    monkeypatch.setattr(summarizer.requests, "post", fake_post)
+    monkeypatch.setattr(summarizer.time, "sleep", lambda s: None)
+    cfg = OpenRouterConfig(dynamic_fallback=False)
+    assert OpenRouterClient(cfg, "k").chat("s", "u") == ("recovered", cfg.model)
+    assert len(calls) == 2
+
+
+def test_client_falls_back_when_embedded_error_persists(monkeypatch):
+    models_called = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        models_called.append(json["model"])
+        if json["model"] == "primary/model:free":
+            return _embedded_error_response()
+        return _chat_response("from fallback")
+
+    monkeypatch.setattr(summarizer.requests, "post", fake_post)
+    monkeypatch.setattr(summarizer.time, "sleep", lambda s: None)
+    cfg = OpenRouterConfig(
+        model="primary/model:free", fallback_models=["backup/model:free"], dynamic_fallback=False
+    )
+    assert OpenRouterClient(cfg, "k").chat("s", "u") == ("from fallback", "backup/model:free")
+    # the embedded 502 is retried like an HTTP 502, then the next model takes over
+    assert models_called == ["primary/model:free"] * summarizer.MAX_ATTEMPTS + ["backup/model:free"]
+
+
+def test_client_embedded_429_marks_model_saturated(monkeypatch):
+    models_called = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        models_called.append(json["model"])
+        if json["model"] == "primary/model:free":
+            return _embedded_error_response(code=429, message="rate limited upstream")
+        return _chat_response("ok")
+
+    monkeypatch.setattr(summarizer.requests, "post", fake_post)
+    monkeypatch.setattr(summarizer.time, "sleep", lambda s: None)
+    cfg = OpenRouterConfig(
+        model="primary/model:free", fallback_models=["backup/model:free"], dynamic_fallback=False
+    )
+    client = OpenRouterClient(cfg, "k")
+    client.chat("s", "u")
+    client.chat("s", "u")
+    # only the first chat touched the primary; the second went straight to the backup
+    assert models_called.count("primary/model:free") == summarizer.MAX_ATTEMPTS
+    assert models_called[-1] == "backup/model:free"
+
+
+@pytest.mark.parametrize(
+    "payload, text",
+    [
+        ({"object": "chat.completion", "choices": []}, ""),  # JSON, but nothing usable in it
+        (None, "<html>bad gateway</html>"),  # not JSON at all
+    ],
+)
+def test_client_falls_back_on_unexpected_response_shape(monkeypatch, payload, text):
+    models_called = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        models_called.append(json["model"])
+        if json["model"] == "primary/model:free":
+            return FakeResponse(200, payload, text=text)
+        return _chat_response("from fallback")
+
+    monkeypatch.setattr(summarizer.requests, "post", fake_post)
+    cfg = OpenRouterConfig(
+        model="primary/model:free", fallback_models=["backup/model:free"], dynamic_fallback=False
+    )
+    assert OpenRouterClient(cfg, "k").chat("s", "u") == ("from fallback", "backup/model:free")
+    # garbage is not a rate limit: no same-model retry, straight to the next model
+    assert models_called == ["primary/model:free", "backup/model:free"]
+
+
+def test_client_raises_when_every_model_returns_garbage(monkeypatch):
+    def fake_post(url, json=None, headers=None, timeout=None):
+        return FakeResponse(200, {"object": "chat.completion"})
+
+    monkeypatch.setattr(summarizer.requests, "post", fake_post)
+    cfg = OpenRouterConfig(model="a/b:free", fallback_models=[], dynamic_fallback=False)
+    with pytest.raises(RuntimeError, match="unexpected OpenRouter response shape"):
+        OpenRouterClient(cfg, "k").chat("s", "u")
+
+
+def test_client_falls_back_on_mid_generation_error(monkeypatch):
+    # the provider can also die mid-generation: the error lands on the choice
+    models_called = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        models_called.append(json["model"])
+        if json["model"] == "primary/model:free":
+            return FakeResponse(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {"content": None},
+                            "finish_reason": "error",
+                            "error": {"message": "provider disconnected", "code": 502},
+                        }
+                    ]
+                },
+            )
+        return _chat_response("from fallback")
+
+    monkeypatch.setattr(summarizer.requests, "post", fake_post)
+    cfg = OpenRouterConfig(
+        model="primary/model:free", fallback_models=["backup/model:free"], dynamic_fallback=False
+    )
+    assert OpenRouterClient(cfg, "k").chat("s", "u") == ("from fallback", "backup/model:free")
+    assert models_called == ["primary/model:free", "backup/model:free"]
+
+
+def test_client_falls_back_on_empty_content(monkeypatch):
+    models_called = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        models_called.append(json["model"])
+        if json["model"] == "primary/model:free":
+            return _chat_response("   ")
+        return _chat_response("real answer")
+
+    monkeypatch.setattr(summarizer.requests, "post", fake_post)
+    cfg = OpenRouterConfig(
+        model="primary/model:free", fallback_models=["backup/model:free"], dynamic_fallback=False
+    )
+    assert OpenRouterClient(cfg, "k").chat("s", "u") == ("real answer", "backup/model:free")
+    assert models_called == ["primary/model:free", "backup/model:free"]
+
+
 def test_client_skips_saturated_model_on_later_calls(monkeypatch):
     # once a model has 429'd out, later calls in the same run go straight to the fallback
     models_called = []
