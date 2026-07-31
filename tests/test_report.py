@@ -115,6 +115,15 @@ def test_digest_without_url_has_no_dead_link():
     assert "](None)" not in md
 
 
+def test_digest_market_only_run_drops_the_zero_count():
+    results = [TopicResult(MARKET_TOPIC, MARKET_LABEL, items=[make_item()], summary_md="s")]
+    md = _digest(results)
+    assert "[Full report](https://g.example/latest)" in md  # no silly "0 ticker section(s)"
+    assert "0 ticker" not in md
+    md_local = _digest(results, report_url=None)
+    assert "Full report" not in md_local  # nothing is missing from the push; no note needed
+
+
 def test_digest_renders_market_failure_note():
     md = _digest(
         [

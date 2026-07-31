@@ -49,7 +49,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--market-only",
         action="store_true",
-        help="Skip all ticker sections and report only the market overview (used on weekends)",
+        help="Skip all ticker sections and report only the market overview",
     )
     parser.add_argument(
         "--telegram",

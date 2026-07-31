@@ -54,8 +54,10 @@ def render_telegram_digest(
             lines.append("")
     ticker_count = sum(1 for result in results if result.topic != MARKET_TOPIC)
     if report_url:
-        lines.append(f"[Full report - {ticker_count} ticker section(s)]({report_url})")
-    else:
+        label = f"Full report - {ticker_count} ticker section(s)" if ticker_count else "Full report"
+        lines.append(f"[{label}]({report_url})")
+    elif ticker_count:
+        # only worth a note when the push is actually missing sections
         lines.append(f"_Full report: {ticker_count} ticker section(s) (no public link for this run)._")
     return "\n".join(lines).rstrip() + "\n"
 
