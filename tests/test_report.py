@@ -3,7 +3,13 @@ from datetime import datetime, timezone
 from conftest import make_item
 
 from stockreport.models import MARKET_LABEL, MARKET_TOPIC, TopicResult
-from stockreport.report import _source_line, default_output_path, render_report, write_report
+from stockreport.report import (
+    _source_line,
+    default_output_path,
+    render_report,
+    render_telegram_digest,
+    write_report,
+)
 
 GENERATED = datetime(2026, 7, 11, 8, 0, tzinfo=timezone.utc)
 
@@ -74,6 +80,50 @@ def test_render_dropped_note():
 def test_render_empty_summary_note():
     md = _render([TopicResult("AAPL", "AAPL", items=[make_item()], summary_md="")])
     assert "_The model returned an empty summary._" in md
+
+
+def _digest(results, report_url="https://g.example/latest", dry_run=False):
+    return render_telegram_digest(
+        results, generated_at=GENERATED, lookback_hours=24, report_url=report_url, dry_run=dry_run
+    )
+
+
+def test_digest_keeps_headline_news_drops_ticker_sections():
+    md = _digest(
+        [
+            TopicResult(MARKET_TOPIC, MARKET_LABEL, items=[make_item()], summary_md="Market summary."),
+            TopicResult("AAPL", "AAPL", items=[make_item(url="https://e.com/2")], summary_md="AAPL summary."),
+            TopicResult("MSFT", "MSFT", items=[make_item(url="https://e.com/3")], summary_md="MSFT summary."),
+        ]
+    )
+    assert "# Daily Stock Report - 2026-07-11" in md
+    assert "## Market Overview" in md and "Market summary." in md
+    assert "**Sources**" in md  # the headline links still travel with the digest
+    assert "## AAPL" not in md and "AAPL summary." not in md and "MSFT" not in md
+    assert "[Full report - 2 ticker section(s)](https://g.example/latest)" in md
+
+
+def test_digest_without_url_has_no_dead_link():
+    md = _digest(
+        [
+            TopicResult(MARKET_TOPIC, MARKET_LABEL, items=[make_item()], summary_md="s"),
+            TopicResult("AAPL", "AAPL"),
+        ],
+        report_url=None,
+    )
+    assert "_Full report: 1 ticker section(s) (no public link for this run)._" in md
+    assert "](None)" not in md
+
+
+def test_digest_renders_market_failure_note():
+    md = _digest(
+        [
+            TopicResult(MARKET_TOPIC, MARKET_LABEL, items=[make_item()], error="Summary failed: boom"),
+            TopicResult("AAPL", "AAPL"),
+        ]
+    )
+    assert "_Summary failed: boom_" in md  # same section renderer as the report
+    assert "[Full report - 1 ticker section(s)]" in md
 
 
 def test_source_line_escapes_markdown_specials():
