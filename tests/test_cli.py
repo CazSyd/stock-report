@@ -50,6 +50,35 @@ def test_dry_run_writes_report_and_exits_0(config_file, tmp_path, monkeypatch):
     assert "this prompt would be sent" in content
 
 
+def test_market_only_drops_all_tickers(config_file, tmp_path, monkeypatch):
+    seen = {}
+
+    def capture(cfg):
+        seen["tickers"] = cfg.tickers
+        return [TopicResult(MARKET_TOPIC, MARKET_LABEL, items=[make_item(hours_ago=1)])]
+
+    monkeypatch.setattr(cli, "collect_all", capture)
+    out = tmp_path / "r.md"
+    code = cli.main(["--config", str(config_file), "--dry-run", "--market-only", "--output", str(out)])
+    assert code == cli.EXIT_OK
+    assert seen["tickers"] == []  # no ticker topics are fetched at all
+    content = out.read_text(encoding="utf-8")
+    assert "## Market Overview" in content
+    assert "## AAPL" not in content  # config ticker absent from the report
+
+
+def test_market_only_overrides_tickers_flag(config_file, monkeypatch):
+    seen = {}
+
+    def capture(cfg):
+        seen["tickers"] = cfg.tickers
+        return []
+
+    monkeypatch.setattr(cli, "collect_all", capture)
+    cli.main(["--config", str(config_file), "--dry-run", "--market-only", "--tickers", "NVDA,MSFT"])
+    assert seen["tickers"] == []
+
+
 def test_tickers_override_dedupes(config_file, monkeypatch):
     seen = {}
 

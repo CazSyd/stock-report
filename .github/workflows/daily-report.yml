@@ -28,7 +28,14 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: uv run stockreport --telegram
+        run: |
+          # weekends (Singapore time): market overview only, no ticker sections
+          FLAGS=""
+          if [ "$(TZ=Asia/Singapore date +%u)" -ge 6 ]; then
+            echo "Weekend in Singapore - market overview only"
+            FLAGS="--market-only"
+          fi
+          uv run stockreport --telegram $FLAGS
 
       - name: Upload report artifact
         if: always()

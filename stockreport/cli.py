@@ -47,6 +47,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Fetch news and build prompts but skip the LLM; writes a .dry-run.md report",
     )
     parser.add_argument(
+        "--market-only",
+        action="store_true",
+        help="Skip all ticker sections and report only the market overview (used on weekends)",
+    )
+    parser.add_argument(
         "--telegram",
         action="store_true",
         help="Deliver the report to Telegram (needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)",
@@ -88,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_CONFIG
     if args.model:
         cfg.openrouter.model = args.model.strip()
+    if args.market_only:
+        cfg.tickers = []
     load_dotenv(cfg.base_dir / ".env")  # .env next to the config; real env vars win
 
     if args.telegram:
@@ -105,7 +112,10 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_PREFLIGHT
         log.info("OpenRouter preflight OK (model %s)", cfg.openrouter.model)
 
-    log.info("Collecting news: market overview + %d tickers (%s)", len(cfg.tickers), ", ".join(cfg.tickers))
+    if cfg.tickers:
+        log.info("Collecting news: market overview + %d tickers (%s)", len(cfg.tickers), ", ".join(cfg.tickers))
+    else:
+        log.info("Collecting news: market overview only")
     results = collect_all(cfg)
 
     generated_at = datetime.now().astimezone()

@@ -38,6 +38,7 @@ Options:
 | Flag | Effect |
 |---|---|
 | `--dry-run` | Fetch news and build prompts but skip the LLM; writes `reports/<date>.dry-run.md` showing exactly what would be sent to the model. Works without an API key. |
+| `--market-only` | Skip all ticker sections; the report contains just the Market Overview. The scheduled workflow uses this on weekends (Singapore time). |
 | `--tickers AAPL,TSLA` | Override the ticker list from the config for this run. |
 | `--model meta-llama/llama-3.3-70b-instruct:free` | Override the model for this run. |
 | `--config path\to\file.yaml` | Use a different config file. |
