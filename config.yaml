@@ -8,12 +8,13 @@ tickers:
   - AMSC
   - NBIS
   - GOOGL
-  - NOW
+  - SKHY
   - RDDT
   - ASML
   - MU
   - NOC
   - LMT
+  - FLNC
   - D05.SI # DBS Group, SGX
   - U96.SI # Sembcorp Industries, SGX
 
