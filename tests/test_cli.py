@@ -201,16 +201,34 @@ def test_telegram_env_missing_exits_2_before_fetching(config_file, monkeypatch):
     assert cli.main(["--config", str(config_file), "--dry-run", "--telegram"]) == cli.EXIT_PREFLIGHT
 
 
-def test_telegram_delivery_sends_report(config_file, tmp_path, monkeypatch):
+def test_telegram_delivery_sends_headline_digest(config_file, tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "someone/stock-report")  # as on GitHub Actions
     monkeypatch.setattr(cli, "collect_all", lambda cfg: _canned_results())
     sent = {}
     monkeypatch.setattr(cli.telegram, "send_report", lambda md: sent.update(md=md) or 2)
     out = tmp_path / "r.md"
     code = cli.main(["--config", str(config_file), "--dry-run", "--telegram", "--output", str(out)])
     assert code == cli.EXIT_OK
-    assert "## Market Overview" in sent["md"]  # delivered content is the rendered report
+    assert "## Market Overview" in sent["md"]  # the headline news is pushed...
+    assert "## AAPL" not in sent["md"]  # ...the ticker sections are not
+    assert "(https://github.com/someone/stock-report/releases/tag/latest)" in sent["md"]
+    assert "## AAPL" in out.read_text(encoding="utf-8")  # the report itself still has everything
+
+
+def test_telegram_digest_without_repo_env_omits_link(config_file, tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)  # local run: nothing public to link to
+    monkeypatch.setattr(cli, "collect_all", lambda cfg: _canned_results())
+    sent = {}
+    monkeypatch.setattr(cli.telegram, "send_report", lambda md: sent.update(md=md) or 1)
+    out = tmp_path / "r.md"
+    code = cli.main(["--config", str(config_file), "--dry-run", "--telegram", "--output", str(out)])
+    assert code == cli.EXIT_OK
+    assert "releases/tag/latest" not in sent["md"]
+    assert "no public link for this run" in sent["md"]
 
 
 def test_telegram_failure_exits_4(config_file, tmp_path, monkeypatch):

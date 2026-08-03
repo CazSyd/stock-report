@@ -31,52 +31,82 @@ def render_report(
     lines.append("")
 
     for result in results:
-        lines.append(f"## {result.label}")
-        lines.append("")
-        if result.is_fallback and result.items:
-            lines.append(
-                f"_No news in the last {lookback_hours} hours; showing the "
-                f"{len(result.items)} most recent item(s) found._"
-            )
-            lines.append("")
-        if result.error:
-            lines.append(f"_{result.error}_")
-        elif not result.items:
-            note = f"_No news found in the last {lookback_hours} hours._"
-            if result.topic != MARKET_TOPIC:
-                note = (
-                    f"_No news found in the last {lookback_hours} hours "
-                    f"(if this persists, check that '{result.topic}' is a valid ticker symbol)._"
-                )
-            lines.append(note)
-        elif dry_run:
-            # fence must be longer than any backtick run inside the prompt
-            fence = "`" * max(4, _longest_backtick_run(result.prompt) + 1)
-            lines.append("_Dry run - this prompt would be sent to the model:_")
-            lines.append("")
-            lines.append(fence + "text")
-            lines.append(result.prompt.rstrip())
-            lines.append(fence)
-        else:
-            if result.model:
-                lines.append(f"_Summarized by {result.model}_")
-                lines.append("")
-            lines.append(result.summary_md or "_The model returned an empty summary._")
-        if result.items:
-            lines.append("")
-            lines.append("**Sources**")
-            lines.append("")
-            for item in result.items:
-                lines.append(_source_line(item))
-            if result.dropped:
-                lines.append("")
-                lines.append(
-                    f"_The last {result.dropped} source(s) listed above did not fit the model "
-                    "context and were not part of the summary._"
-                )
+        lines.extend(_section_lines(result, lookback_hours, dry_run))
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
+
+
+def render_telegram_digest(
+    results: list[TopicResult],
+    generated_at: datetime,
+    lookback_hours: int,
+    report_url: str | None,
+    dry_run: bool = False,
+) -> str:
+    """The Telegram flavor of the report: only the headline news (the Market
+    Overview section), then a pointer to the full report holding the
+    per-ticker sections - one short push instead of a dozen messages."""
+    lines: list[str] = [f"# Daily Stock Report - {generated_at:%Y-%m-%d}", ""]
+    for result in results:
+        if result.topic == MARKET_TOPIC:
+            lines.extend(_section_lines(result, lookback_hours, dry_run))
+            lines.append("")
+    ticker_count = sum(1 for result in results if result.topic != MARKET_TOPIC)
+    if report_url:
+        label = f"Full report - {ticker_count} ticker section(s)" if ticker_count else "Full report"
+        lines.append(f"[{label}]({report_url})")
+    elif ticker_count:
+        # only worth a note when the push is actually missing sections
+        lines.append(f"_Full report: {ticker_count} ticker section(s) (no public link for this run)._")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _section_lines(result: TopicResult, lookback_hours: int, dry_run: bool) -> list[str]:
+    """One '## <label>' section: notes, summary (or dry-run prompt), sources."""
+    lines: list[str] = [f"## {result.label}", ""]
+    if result.is_fallback and result.items:
+        lines.append(
+            f"_No news in the last {lookback_hours} hours; showing the "
+            f"{len(result.items)} most recent item(s) found._"
+        )
+        lines.append("")
+    if result.error:
+        lines.append(f"_{result.error}_")
+    elif not result.items:
+        note = f"_No news found in the last {lookback_hours} hours._"
+        if result.topic != MARKET_TOPIC:
+            note = (
+                f"_No news found in the last {lookback_hours} hours "
+                f"(if this persists, check that '{result.topic}' is a valid ticker symbol)._"
+            )
+        lines.append(note)
+    elif dry_run:
+        # fence must be longer than any backtick run inside the prompt
+        fence = "`" * max(4, _longest_backtick_run(result.prompt) + 1)
+        lines.append("_Dry run - this prompt would be sent to the model:_")
+        lines.append("")
+        lines.append(fence + "text")
+        lines.append(result.prompt.rstrip())
+        lines.append(fence)
+    else:
+        if result.model:
+            lines.append(f"_Summarized by {result.model}_")
+            lines.append("")
+        lines.append(result.summary_md or "_The model returned an empty summary._")
+    if result.items:
+        lines.append("")
+        lines.append("**Sources**")
+        lines.append("")
+        for item in result.items:
+            lines.append(_source_line(item))
+        if result.dropped:
+            lines.append("")
+            lines.append(
+                f"_The last {result.dropped} source(s) listed above did not fit the model "
+                "context and were not part of the summary._"
+            )
+    return lines
 
 
 def _longest_backtick_run(text: str) -> int:

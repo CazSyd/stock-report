@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from datetime import datetime
@@ -14,7 +15,7 @@ from . import __version__, summarizer, telegram
 from .aggregator import collect_all
 from .config import AppConfig, ConfigError, load_config, normalize_tickers
 from .models import MARKET_TOPIC, TopicResult
-from .report import default_output_path, render_report, write_report
+from .report import default_output_path, render_report, render_telegram_digest, write_report
 from .summarizer import PreflightError
 
 log = logging.getLogger("stockreport")
@@ -48,7 +49,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--market-only",
         action="store_true",
-        help="Skip all ticker sections and report only the market overview (used on weekends)",
+        help="Skip all ticker sections and report only the market overview",
     )
     parser.add_argument(
         "--telegram",
@@ -176,14 +177,26 @@ def main(argv: list[str] | None = None) -> int:
     log.info("Report written to %s", output_path.resolve())
 
     if args.telegram:
+        # push only the headline news; the ticker sections live in the report
+        digest = render_telegram_digest(
+            results, generated_at, cfg.news.lookback_hours, _report_url(), dry_run=args.dry_run
+        )
         try:
-            sent = telegram.send_report(markdown)
+            sent = telegram.send_report(digest)
         except Exception as exc:
             log.error("Telegram delivery failed: %s", exc)
             return EXIT_NOTIFY
-        log.info("Report delivered to Telegram in %d message(s)", sent)
+        log.info("Headline digest delivered to Telegram in %d message(s)", sent)
 
     return EXIT_PARTIAL if any_error else EXIT_OK
+
+
+def _report_url() -> str | None:
+    """Public URL of the freshest full report: the rolling 'latest' release
+    page, which the workflow refreshes right after this run. GITHUB_REPOSITORY
+    is set by GitHub Actions; local runs have no public copy to link to."""
+    repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
+    return f"https://github.com/{repo}/releases/tag/latest" if repo else None
 
 
 def _apply_market_triage(result: TopicResult, cfg: AppConfig, client, dry_run: bool):

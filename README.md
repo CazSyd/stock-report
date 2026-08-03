@@ -38,7 +38,7 @@ Options:
 | Flag | Effect |
 |---|---|
 | `--dry-run` | Fetch news and build prompts but skip the LLM; writes `reports/<date>.dry-run.md` showing exactly what would be sent to the model. Works without an API key. |
-| `--market-only` | Skip all ticker sections; the report contains just the Market Overview. The scheduled workflow uses this on weekends (Singapore time). |
+| `--market-only` | Skip all ticker sections; the report contains just the Market Overview. |
 | `--tickers AAPL,TSLA` | Override the ticker list from the config for this run. |
 | `--model meta-llama/llama-3.3-70b-instruct:free` | Override the model for this run. |
 | `--config path\to\file.yaml` | Use a different config file. |
@@ -103,7 +103,10 @@ and CLI exit codes. No network or API key needed.
 
 `.github/workflows/daily-report.yml` generates the report every day at **07:30
 Singapore time** (cron `30 23 * * *` UTC; GitHub's scheduler can be 15–60 min
-late) and sends it to your Telegram chat as formatted messages. One-time setup:
+late) and pushes a short **headline digest** to your Telegram chat: the Market
+Overview section plus a link to the full report (the rolling release below),
+which holds every ticker section. The flow is identical every day of the week.
+One-time setup:
 
 1. **Create the bot**: message [@BotFather](https://t.me/BotFather) on Telegram,
    send `/newbot`, follow the prompts, and copy the bot token.
@@ -117,11 +120,14 @@ late) and sends it to your Telegram chat as formatted messages. One-time setup:
 5. Test it: Actions tab → "Daily report" → **Run workflow**, or locally with
    `uv run stockreport --telegram` (put the two Telegram values in `.env`).
 
-The report is converted to Telegram-native HTML formatting (bold sections,
-clickable source links) and split into a few messages at section boundaries;
-if Telegram ever rejects a message's formatting, it is resent as plain text so
-content is never lost. Each run also uploads the `.md` report as a workflow
-artifact (kept 30 days).
+The digest is converted to Telegram-native HTML formatting (bold headings,
+clickable source links); if Telegram ever rejects a message's formatting, it is
+resent as plain text so content is never lost. The per-ticker sections are
+never pushed to the chat — follow the digest's link to read them. The link is
+derived from `GITHUB_REPOSITORY`, so it works in any fork with no setup; local
+`--telegram` test runs have no public copy to link to, and the digest says so
+instead. Each run also uploads the `.md` report as a workflow artifact (kept
+30 days).
 
 ### Latest report on demand
 
