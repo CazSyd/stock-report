@@ -57,3 +57,13 @@ jobs:
           gh release edit latest --title "Daily report $(date -u +%F)" --notes-file report.md
           # ...and the asset is the stable downloadable file
           gh release upload latest report.md --clobber
+
+  workflow-keepalive:
+    name: Keep scheduled workflow active
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Prevent inactivity suspension
+        uses: liskin/gh-workflow-keepalive@v1
